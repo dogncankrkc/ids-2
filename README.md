@@ -1,205 +1,123 @@
-# CNN Model Development Framework
+# IDS — CNN-based Intrusion Detection (Team README)
 
-A comprehensive Python project structure for developing Convolutional Neural Network (CNN) models for image classification tasks.
+Lightweight pipeline for network Intrusion Detection (IDS) using a compact
+CNN. Input is tabular CSV data (70 selected features) reshaped to
+`(1, 7, 10)` for the model. The project supports both binary and
+multiclass classification.
+
+Keep this README short, actionable and team-oriented — include high-level
+purpose, how to run things locally, contribution guidelines and where to
+find important project pieces.
 
 ## Project Structure
 
-```
 ids-1/
-├── configs/                    # Configuration files
-│   ├── default_config.yaml     # Default training configuration
-│   └── cifar10_config.yaml     # CIFAR-10 specific configuration
-│
-├── data/                       # Data directory
-│   ├── raw/                    # Raw, unprocessed data
-│   ├── processed/              # Preprocessed data
-│   └── external/               # External datasets
-│
-├── models/                     # Saved models
-│   ├── checkpoints/            # Training checkpoints
-│   └── final/                  # Final trained models
-│
-├── notebooks/                  # Jupyter notebooks for experimentation
-│   └── 01_training_example.ipynb
-│
-├── src/                        # Source code
-│   ├── __init__.py
-│   ├── models/                 # Model architectures
-│   │   ├── __init__.py
-│   │   └── cnn_model.py        # CNN model definitions
-│   ├── data/                   # Data loading and processing
-│   │   ├── __init__.py
-│   │   ├── dataset.py          # Custom dataset classes
-│   │   └── transforms.py       # Data transformations
-│   ├── training/               # Training utilities
-│   │   ├── __init__.py
-│   │   ├── trainer.py          # Training loop
-│   │   └── metrics.py          # Evaluation metrics
-│   └── utils/                  # Utility functions
-│       ├── __init__.py
-│       ├── helpers.py          # General helpers
-│       └── visualization.py    # Plotting utilities
-│
-├── tests/                      # Unit tests
-│   ├── __init__.py
-│   ├── test_models.py
-│   └── test_metrics.py
-│
-├── logs/                       # Training logs
-├── train.py                    # Main training script
-├── inference.py                # Inference script
-├── requirements.txt            # Python dependencies
-├── setup.py                    # Package installation
-└── .gitignore                  # Git ignore rules
+├── configs/                # YAML configs for training (binary + multiclass)
+├── data/                   # Raw and optional processed CSV data
+│   ├── raw/                # Put raw CSV files here (project consumes *.csv)
+│   └── processed/          # Optional: processed CSVs
+├── models/                 # Saved scalers/encoders and checkpoints
+│   ├── checkpoints/
+│   └── final/
+├── notebooks/              # Analysis / experiments (optional)
+├── src/                    # Source package: models, data, training, utils
+├── tests/                  # Unit tests
+├── train.py                # CLI training entrypoint
+├── inference.py            # Simple inference example
+├── requirements.txt        # Dependencies
+└── setup.py                # Packaging metadata
 ```
 
-## Features
+**Purpose & Scope**
+- Build and evaluate a compact CNN-based IDS from tabular features.
+- Provide reusable preprocessing, training and inference utilities
+  so team members can iterate on models and experiments.
 
-- **Modular Architecture**: Clean separation of concerns with dedicated modules for models, data, training, and utilities
-- **Multiple CNN Architectures**: Includes SimpleCNN and VGG-style CNN implementations
-- **Data Augmentation**: Built-in support for common image augmentation techniques
-- **Training Utilities**: Complete training loop with early stopping, learning rate scheduling, and checkpointing
-- **Evaluation Metrics**: Accuracy, precision, recall, F1 score, and confusion matrix
-- **Visualization**: Training history plots, confusion matrices, and prediction visualization
-- **Configuration Management**: YAML-based configuration for easy experiment management
+**Quick Start (local)**
 
-## Installation
+- Create and activate a virtual environment:
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ids-1.git
-cd ids-1
+python -m venv .venv
+source .venv/bin/activate
 ```
 
-2. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+- Install dependencies:
 
-3. Install dependencies:
 ```bash
 pip install -r requirements.txt
-```
-
-4. Install the package in development mode:
-```bash
 pip install -e .
 ```
 
-## Quick Start
+**Prepare data**
+- Put one or more CSV files in `data/raw/`. The loader concatenates all
+  `*.csv` files found there (`src/data/dataset.py`).
+- Required label columns:
+  - `binary_label` — binary classification (0 = benign, 1 = attack)
+  - `label2` — multiclass label for attack category
+- Feature selection (70 features) and preprocessing rules are in
+  `src/data/preprocess.py` (`SELECTED_FEATURES`). Preprocessing saves
+  scalers/encoders to `models/` (e.g. `models/scaler_multi.pkl`).
 
-### Training with CIFAR-10
-
-```bash
-python train.py --dataset cifar10 --epochs 50
-```
-
-### Training with Custom Configuration
-
-```bash
-python train.py --config configs/cifar10_config.yaml
-```
-
-### Running Inference
+**Run training**
+- Binary example:
 
 ```bash
-python inference.py --model-path models/final/model.pth --image path/to/image.jpg
+python train.py --config configs/ids_binary.yaml --mode binary
 ```
 
-## Usage Examples
+- Multiclass example:
 
-### Creating a Model
-
-```python
-from src.models.cnn_model import create_model
-
-# Create a simple CNN
-model = create_model(
-    model_type="simple",
-    num_classes=10,
-    input_channels=3,
-    input_size=(32, 32)
-)
-
-# Create a VGG-style CNN
-model = create_model(
-    model_type="vgg",
-    num_classes=100,
-    input_channels=3,
-    input_size=(32, 32)
-)
+```bash
+python train.py --config configs/ids_multiclass.yaml --mode multiclass
 ```
 
-### Training a Model
+Notes:
+- `train.py` reads the config YAML for hyperparameters, paths and logging.
+- Checkpoints and the final model are stored under `models/checkpoints`.
 
-```python
-from src.models.cnn_model import create_model
-from src.training.trainer import Trainer
-from src.utils.helpers import get_device, get_optimizer
+**Inference**
+- Use `inference.py` for a simple example that expects a one-row CSV
+  (see `preprocess_single_sample` in `src/data/preprocess.py`).
 
-device = get_device()
-model = create_model(model_type="simple", num_classes=10)
-optimizer = get_optimizer(model, optimizer_name="adam", learning_rate=0.001)
-criterion = torch.nn.CrossEntropyLoss()
-
-trainer = Trainer(model, criterion, optimizer, device)
-history = trainer.train(train_loader, val_loader, epochs=100)
+```bash
+python inference.py
 ```
 
-### Evaluating Performance
+Programmatic usage: preprocess with `preprocess_single_sample`, load the
+model with `src.utils.helpers.load_model` or `IDS_CNN` and run a forward pass.
 
-```python
-from src.training.metrics import accuracy, confusion_matrix
+**Configuration**
+- Configs live in `configs/` and follow this structure: `model`, `data`,
+  `training`, `checkpoint`, `logging`, `seed`. Edit to change hyperparams
+  or file paths.
 
-# Calculate accuracy
-acc = accuracy(predictions, targets)
+**Tests & Code Quality**
+- Run tests:
 
-# Generate confusion matrix
-cm = confusion_matrix(predictions, targets, num_classes=10)
-```
-
-## Model Architectures
-
-### SimpleCNN
-A lightweight CNN with 2 convolutional layers followed by 2 fully connected layers. Suitable for quick experimentation and simpler datasets.
-
-### VGGStyleCNN
-A deeper VGG-inspired architecture with 3 convolutional blocks, each containing 2 conv layers. Better suited for more complex image classification tasks.
-
-## Configuration
-
-Training parameters can be configured via YAML files:
-
-```yaml
-model:
-  type: "simple"
-  num_classes: 10
-  input_channels: 3
-  input_size: [32, 32]
-
-training:
-  epochs: 100
-  learning_rate: 0.001
-  optimizer: "adam"
-  scheduler: "cosine"
-```
-
-## Testing
-
-Run the test suite:
 ```bash
 pytest tests/ -v
 ```
 
-## Requirements
+- For development, use the `dev` extras in `setup.py` or run the formatters
+  and linters locally (black, flake8, isort, mypy).
 
-- Python 3.8+
-- PyTorch 1.12+
-- torchvision 0.13+
-- NumPy, Pandas, Matplotlib
-- See `requirements.txt` for complete list
+**For Contributors / Team**
+- Keep changes small and focused. Prefer descriptive commits.
+- Update `SELECTED_FEATURES` and docs if you change feature selection.
+- When adding new experiments, add a short notebook or script under
+  `notebooks/` and include which config you used.
+- If you add new data columns, update `src/data/preprocess.py` and add
+  unit tests under `tests/`.
 
-## License
+**Where to look next**
+- `src/data/preprocess.py` — preprocessing, scaler/encoder saving
+- `src/models/cnn_model.py` — model implementation and factory
+- `src/training/trainer.py` — training loop, metrics, checkpointing
 
-MIT License
+**Contact / Maintainers**
+- Primary: `dogncankrkc` (repo owner). Add maintainers in GitHub settings
+  or list emails here as the team grows.
+
+License: MIT
+
