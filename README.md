@@ -11,21 +11,41 @@ find important project pieces.
 
 ## Project Structure
 
+```bash
 ids-1/
-├── configs/                # YAML configs for training (binary + multiclass)
-├── data/                   # Raw and optional processed CSV data
-│   ├── raw/                # Put raw CSV files here (project consumes *.csv)
-│   └── processed/          # Optional: processed CSVs
-├── models/                 # Saved scalers/encoders and checkpoints
-│   ├── checkpoints/
-│   └── final/
-├── notebooks/              # Analysis / experiments (optional)
-├── src/                    # Source package: models, data, training, utils
-├── tests/                  # Unit tests
-├── train.py                # CLI training entrypoint
-├── inference.py            # Simple inference example
-├── requirements.txt        # Dependencies
-└── setup.py                # Packaging metadata
+├── configs/                # YAML configs for training
+│   ├── ids_binary.yaml
+│   └── ids_multiclass.yaml
+│
+├── data/
+│   ├── raw/                # put all CSV datasets here  👈  (*.csv)
+│   ├── processed/          # automatic output of preprocessing
+│   └── external/           # optional / outside data
+│
+├── models/
+│   ├── checkpoints/        # auto-saved checkpoints during training
+│   └── final/              # best/final models
+│       └── final_model.pth
+│   ├── scaler_multi.pkl
+│   └── label_encoder.pkl
+│
+├── outputs/
+│   └── prediction_results_multiclass.csv   # test predictions
+│
+├── notebooks/
+│   └── 01_training_example.ipynb           # experiments / visualization
+│
+├── src/
+│   ├── data/              # dataset, preprocessing, transforms
+│   ├── models/            # CNN architectures
+│   ├── training/          # trainer, metrics, callbacks
+│   ├── utils/             # helpers & visualization tools
+│   └── testing/           # test_ids.py → evaluate trained model
+│
+├── train.py               # CLI training entrypoint
+├── inference.py           # single sample inference example
+├── requirements.txt
+└── README.md
 ```
 
 **Purpose & Scope**
