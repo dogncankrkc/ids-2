@@ -1,0 +1,32 @@
+# ============================
+# MULTICLASS IDS CONFIG
+# ============================
+
+model:
+  type: "ids_cnn"
+  num_classes: 8          # attacks (dos, mitm, recon, ...)
+  input_channels: 1
+  input_size: [7, 10]     # CNN input shape
+
+data:
+  raw_dir: "data/raw"     # ONLY NEEDED FIELD RIGHT NOW
+  batch_size: 64
+  num_workers: 2
+
+training:
+  epochs: 50
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 8
+
+checkpoint:
+  save_dir: "models/checkpoints/ids_multiclass"
+  save_every: 10
+
+logging:
+  log_dir: "logs"
+  verbose: true
+
+seed: 42

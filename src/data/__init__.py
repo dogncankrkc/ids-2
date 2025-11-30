@@ -1,16 +1,24 @@
 """
-Data Loading and Preprocessing Module
+Data Loading & Preprocessing Module (IDS - CSV Based)
 
-This module provides utilities for loading, preprocessing, and augmenting
-image data for CNN training.
+This package provides:
+1. Loading multiple CSV files from /data/raw
+2. Preprocessing pipelines for:
+    - Binary IDS classification
+    - Multiclass IDS classification
+3. CNN-ready tensor generation (reshaped, scaled, encoded)
 """
 
-from .dataset import ImageDataset, create_data_loaders
-from .transforms import get_train_transforms, get_test_transforms
+from .dataset import load_raw_csv
+from .preprocess import (
+    preprocess_binary,
+    preprocess_multiclass,
+    preprocess_single_sample, 
+)
 
 __all__ = [
-    "ImageDataset",
-    "create_data_loaders",
-    "get_train_transforms",
-    "get_test_transforms",
+    "load_raw_csv",
+    "preprocess_binary",
+    "preprocess_multiclass",
+    "preprocess_single_sample",
 ]

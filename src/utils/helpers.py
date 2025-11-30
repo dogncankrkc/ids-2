@@ -29,21 +29,17 @@ def set_seed(seed: int = 42) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def get_device() -> torch.device:
+def get_device():
     """
-    Get the available device for training.
-
-    Returns:
-        torch.device: CUDA device if available, else CPU
+    Automatically select GPU (Apple MPS / NVIDIA CUDA) if available,
+    otherwise CPU.
     """
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+    if torch.backends.mps.is_available():  # Apple Silicon GPU (MPS backend)
+        return torch.device("mps")
+    elif torch.cuda.is_available():        # NVIDIA GPU 
+        return torch.device("cuda")
     else:
-        device = torch.device("cpu")
-        print("Using CPU")
-
-    return device
+        return torch.device("cpu")
 
 
 def save_model(
@@ -208,3 +204,13 @@ def get_scheduler(
         )
 
     return schedulers[scheduler_name.lower()]()
+
+def prepare_for_training(seed: int = 42) -> torch.device:
+    """
+    Full setup for IDS training:
+    - sets random seed
+    - selects device (GPU/CPU)
+    """
+    set_seed(seed)
+    device = get_device()
+    return device

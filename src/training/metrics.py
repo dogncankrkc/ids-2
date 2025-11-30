@@ -196,3 +196,12 @@ def confusion_matrix(
         matrix[target, pred] += 1
 
     return matrix
+
+def get_predictions_from_logits(logits: torch.Tensor) -> torch.Tensor:
+    # Binary case → output shape: (batch, 1) veya (batch,)
+    if logits.dim() == 1 or logits.shape[1] == 1:
+        probs = torch.sigmoid(logits)
+        return (probs >= 0.5).long()
+
+    # Multiclass case
+    return torch.argmax(logits, dim=1)

@@ -1,113 +1,60 @@
 """
-Image Transformation Utilities
+Preprocessing Utilities for IDS Data (CNN Input)
 
-This module provides common image transformations for training
-and testing CNN models.
+This module provides two different pipelines:
+1) Binary Classification  → uses 'binary_label'
+2) Multiclass IDS         → uses 'label2' (main attack types)
+
+All other label columns are dropped.
 """
 
-from typing import Tuple, List, Optional
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from typing import Tuple
 
-import torchvision.transforms as T
 
+DROP_COLS_COMMON = [
+    "device_name", "device_mac", "label_full",
+    "timestamp", "timestamp_start", "timestamp_end",
+]
 
-def get_train_transforms(
-    image_size: Tuple[int, int] = (224, 224),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-    horizontal_flip: bool = True,
-    random_rotation: Optional[int] = 10,
-    color_jitter: bool = True,
-) -> T.Compose:
+# ---- BINARY MODEL ----
+def preprocess_binary(df: pd.DataFrame, reshape_to=(7, 10, 1)):
     """
-    Get training data transformations with augmentation.
-
-    Args:
-        image_size: Target image size (height, width)
-        mean: Mean values for normalization (ImageNet defaults)
-        std: Standard deviation values for normalization
-        horizontal_flip: Whether to apply random horizontal flip
-        random_rotation: Degrees for random rotation (None to disable)
-        color_jitter: Whether to apply color jitter augmentation
-
-    Returns:
-        Composed transforms for training
+    Preprocess for Binary IDS Classification.
+    Uses 'binary_label' column as target.
+    All other label columns are dropped.
     """
-    transforms_list: List[T.transforms.Transform] = [
-        T.Resize(image_size),
-    ]
+    df = df.drop(columns=DROP_COLS_COMMON, errors="ignore")
 
-    # Data augmentation
-    if horizontal_flip:
-        transforms_list.append(T.RandomHorizontalFlip(p=0.5))
+    # Keep only numeric features + target
+    y = df["binary_label"].values  # Already binary (0/1)
+    X = df.select_dtypes(include=["float64", "int64"])
 
-    if random_rotation:
-        transforms_list.append(T.RandomRotation(degrees=random_rotation))
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-    if color_jitter:
-        transforms_list.append(
-            T.ColorJitter(
-                brightness=0.2,
-                contrast=0.2,
-                saturation=0.2,
-                hue=0.1,
-            )
-        )
-
-    # Random crop with padding for additional augmentation
-    transforms_list.append(T.RandomCrop(image_size, padding=4))
-
-    # Convert to tensor and normalize
-    transforms_list.extend([
-        T.ToTensor(),
-        T.Normalize(mean=mean, std=std),
-    ])
-
-    return T.Compose(transforms_list)
+    X_reshaped = X_scaled.reshape(-1, reshape_to[0], reshape_to[1], reshape_to[2])
+    return X_reshaped, y, scaler
 
 
-def get_test_transforms(
-    image_size: Tuple[int, int] = (224, 224),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-) -> T.Compose:
+# ---- MULTICLASS MODEL ----
+def preprocess_multiclass(df: pd.DataFrame, reshape_to=(7, 10, 1)):
     """
-    Get test/validation data transformations (no augmentation).
-
-    Args:
-        image_size: Target image size (height, width)
-        mean: Mean values for normalization
-        std: Standard deviation values for normalization
-
-    Returns:
-        Composed transforms for testing/validation
+    Preprocess for MULTICLASS IDS.
+    Uses 'label2' → attack group (e.g., mitm, dos, recon...)
+    All other label columns are dropped.
     """
-    return T.Compose([
-        T.Resize(image_size),
-        T.CenterCrop(image_size),
-        T.ToTensor(),
-        T.Normalize(mean=mean, std=std),
-    ])
+    df = df.drop(columns=DROP_COLS_COMMON, errors="ignore")
 
+    # Encode 'label2'
+    encoder = LabelEncoder()
+    y = encoder.fit_transform(df["label2"])
 
-def get_inference_transforms(
-    image_size: Tuple[int, int] = (224, 224),
-    mean: Tuple[float, float, float] = (0.485, 0.456, 0.406),
-    std: Tuple[float, float, float] = (0.229, 0.224, 0.225),
-) -> T.Compose:
-    """
-    Get transforms for inference on single images.
+    X = df.select_dtypes(include=["float64", "int64"])
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-    Args:
-        image_size: Target image size
-        mean: Mean values for normalization
-        std: Standard deviation values for normalization
-
-    Returns:
-        Composed transforms for inference
-    """
-    return T.Compose([
-        T.Resize(image_size),
-        T.CenterCrop(image_size),
-        T.ToTensor(),
-        T.Normalize(mean=mean, std=std),
-    ])
+    X_reshaped = X_scaled.reshape(-1, reshape_to[0], reshape_to[1], reshape_to[2])
+    return X_reshaped, y, scaler, encoder

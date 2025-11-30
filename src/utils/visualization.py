@@ -1,8 +1,10 @@
 """
-Visualization Utilities
+Visualization Utilities (IDS Version – Numerical Features)
 
-This module provides functions for visualizing training progress,
-model predictions, and evaluation metrics.
+Only includes relevant functions for network intrusion detection:
+    ✔ Training & validation curves
+    ✔ Learning rate visualization
+    ✔ Confusion matrix heatmap
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -114,76 +116,76 @@ def plot_confusion_matrix(
     plt.show()
 
 
-def visualize_predictions(
-    model: torch.nn.Module,
-    data_loader: DataLoader,
-    class_names: List[str],
-    device: torch.device,
-    num_images: int = 16,
-    save_path: Optional[str] = None,
-    figsize: Tuple[int, int] = (12, 12),
-) -> None:
-    """
-    Visualize model predictions on a batch of images.
+# def visualize_predictions(
+#     model: torch.nn.Module,
+#     data_loader: DataLoader,
+#     class_names: List[str],
+#     device: torch.device,
+#     num_images: int = 16,
+#     save_path: Optional[str] = None,
+#     figsize: Tuple[int, int] = (12, 12),
+# ) -> None:
+#     """
+#     Visualize model predictions on a batch of images.
 
-    Args:
-        model: Trained model
-        data_loader: Data loader to get images from
-        class_names: Names of the classes
-        device: Device to run inference on
-        num_images: Number of images to visualize
-        save_path: Path to save the figure (optional)
-        figsize: Figure size
-    """
-    model.eval()
+#     Args:
+#         model: Trained model
+#         data_loader: Data loader to get images from
+#         class_names: Names of the classes
+#         device: Device to run inference on
+#         num_images: Number of images to visualize
+#         save_path: Path to save the figure (optional)
+#         figsize: Figure size
+#     """
+#     model.eval()
 
-    # Get a batch of images
-    images, labels = next(iter(data_loader))
-    images = images[:num_images]
-    labels = labels[:num_images]
+#     # Get a batch of images
+#     images, labels = next(iter(data_loader))
+#     images = images[:num_images]
+#     labels = labels[:num_images]
 
-    # Get predictions
-    with torch.no_grad():
-        outputs = model(images.to(device))
-        _, predictions = outputs.max(1)
-        predictions = predictions.cpu()
+#     # Get predictions
+#     with torch.no_grad():
+#         outputs = model(images.to(device))
+#         _, predictions = outputs.max(1)
+#         predictions = predictions.cpu()
 
-    # Denormalize images for visualization
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-    images = images * std + mean
-    images = torch.clamp(images, 0, 1)
+#     # Denormalize images for visualization
+#     mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+#     std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+#     images = images * std + mean
+#     images = torch.clamp(images, 0, 1)
 
-    # Calculate grid size
-    grid_size = int(np.ceil(np.sqrt(num_images)))
+#     # Calculate grid size
+#     grid_size = int(np.ceil(np.sqrt(num_images)))
 
-    fig, axes = plt.subplots(grid_size, grid_size, figsize=figsize)
-    axes = axes.flatten()
+#     fig, axes = plt.subplots(grid_size, grid_size, figsize=figsize)
+#     axes = axes.flatten()
 
-    for idx in range(num_images):
-        ax = axes[idx]
+#     for idx in range(num_images):
+#         ax = axes[idx]
 
-        # Convert to numpy and transpose for matplotlib
-        img = images[idx].numpy().transpose(1, 2, 0)
-        ax.imshow(img)
+#         # Convert to numpy and transpose for matplotlib
+#         img = images[idx].numpy().transpose(1, 2, 0)
+#         ax.imshow(img)
 
-        true_label = class_names[labels[idx]]
-        pred_label = class_names[predictions[idx]]
-        correct = labels[idx] == predictions[idx]
+#         true_label = class_names[labels[idx]]
+#         pred_label = class_names[predictions[idx]]
+#         correct = labels[idx] == predictions[idx]
 
-        color = "green" if correct else "red"
-        ax.set_title(f"True: {true_label}\nPred: {pred_label}", color=color)
-        ax.axis("off")
+#         color = "green" if correct else "red"
+#         ax.set_title(f"True: {true_label}\nPred: {pred_label}", color=color)
+#         ax.axis("off")
 
-    # Hide unused subplots
-    for idx in range(num_images, len(axes)):
-        axes[idx].axis("off")
+#     # Hide unused subplots
+#     for idx in range(num_images, len(axes)):
+#         axes[idx].axis("off")
 
-    plt.tight_layout()
+#     plt.tight_layout()
 
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.show()
+#     if save_path:
+#         plt.savefig(save_path, dpi=150, bbox_inches="tight")
+#     plt.show()
 
 
 def plot_learning_rate(

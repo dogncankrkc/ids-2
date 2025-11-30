@@ -1,14 +1,22 @@
 """
-CNN Model Trainer
+CNN Model Trainer – IDS Version (Binary & Multiclass Support)
 
-This module provides a Trainer class for training and evaluating
-CNN models with various features like learning rate scheduling,
-early stopping, and checkpoint saving.
+This trainer is compatible with:
+    - Binary IDS classification (using BCEWithLogitsLoss)
+    - Multiclass IDS classification (using CrossEntropyLoss)
+    - Evaluation metrics from src/evaluation/metrics.py
+
+Key Features:
+    ✓ Train / Validation loops
+    ✓ Early stopping
+    ✓ Learning rate scheduler support
+    ✓ Checkpoint saving
+    ✓ Training history storage
 """
 
 import os
 import time
-from typing import Dict, Optional, Callable, Any, List
+from typing import Dict, Optional, Any, List
 
 import torch
 import torch.nn as nn
@@ -16,27 +24,17 @@ from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 
+# Use metrics.py functions
+from src.training.metrics import (
+    accuracy,
+    precision,
+    recall,
+    f1_score,
+    get_predictions_from_logits,
+)
+
 
 class Trainer:
-    """
-    Trainer class for CNN model training and evaluation.
-
-    Features:
-        - Training and validation loops
-        - Learning rate scheduling
-        - Early stopping
-        - Model checkpointing
-        - Training history tracking
-
-    Args:
-        model: PyTorch model to train
-        criterion: Loss function
-        optimizer: Optimizer for training
-        device: Device to train on (cuda/cpu)
-        scheduler: Optional learning rate scheduler
-        checkpoint_dir: Directory to save model checkpoints
-    """
-
     def __init__(
         self,
         model: nn.Module,
@@ -47,11 +45,13 @@ class Trainer:
         checkpoint_dir: str = "models/checkpoints",
     ):
         self.model = model.to(device)
-        self.criterion = criterion
+        self.criterion = criterion         # BCE or CrossEntropy
         self.optimizer = optimizer
         self.device = device
         self.scheduler = scheduler
         self.checkpoint_dir = checkpoint_dir
+
+        os.makedirs(checkpoint_dir, exist_ok=True)
 
         # Training history
         self.history: Dict[str, List[float]] = {
@@ -59,68 +59,50 @@ class Trainer:
             "train_acc": [],
             "val_loss": [],
             "val_acc": [],
+            "precision": [],
+            "recall": [],
+            "f1_score": [],
             "lr": [],
         }
 
-        # Best model tracking
+        # Best results tracking
         self.best_val_loss = float("inf")
         self.best_val_acc = 0.0
 
-        # Create checkpoint directory
-        os.makedirs(checkpoint_dir, exist_ok=True)
 
-    def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
-        """
-        Train for one epoch.
-
-        Args:
-            train_loader: Training data loader
-
-        Returns:
-            Dictionary with training metrics
-        """
+    # -------------------------------------------------------
+    # One epoch of training
+    # -------------------------------------------------------
+    def train_epoch(self, train_loader: DataLoader):
         self.model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
+        running_loss, correct, total = 0.0, 0, 0
 
-        for batch_idx, (inputs, targets) in enumerate(train_loader):
+        for inputs, targets in train_loader:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
 
-            # Forward pass
             self.optimizer.zero_grad()
-            outputs = self.model(inputs)
+            outputs = self.model(inputs)     # logits
             loss = self.criterion(outputs, targets)
-
-            # Backward pass
             loss.backward()
             self.optimizer.step()
 
-            # Statistics
             running_loss += loss.item()
-            _, predicted = outputs.max(1)
+            preds = get_predictions_from_logits(outputs)
+            correct += preds.eq(targets).sum().item()
             total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
 
-        epoch_loss = running_loss / len(train_loader)
-        epoch_acc = 100.0 * correct / total
+        return {
+            "loss": running_loss / len(train_loader),
+            "acc":  100.0 * correct / total
+        }
 
-        return {"loss": epoch_loss, "accuracy": epoch_acc}
 
-    def validate(self, val_loader: DataLoader) -> Dict[str, float]:
-        """
-        Validate the model.
-
-        Args:
-            val_loader: Validation data loader
-
-        Returns:
-            Dictionary with validation metrics
-        """
+    # -------------------------------------------------------
+    # Validation + Extra Metrics
+    # -------------------------------------------------------
+    def validate(self, val_loader: DataLoader):
         self.model.eval()
-        running_loss = 0.0
-        correct = 0
-        total = 0
+        running_loss, preds_all, targets_all = 0.0, [], []
 
         with torch.no_grad():
             for inputs, targets in val_loader:
@@ -130,144 +112,86 @@ class Trainer:
                 loss = self.criterion(outputs, targets)
 
                 running_loss += loss.item()
-                _, predicted = outputs.max(1)
-                total += targets.size(0)
-                correct += predicted.eq(targets).sum().item()
+                preds = get_predictions_from_logits(outputs)
 
-        epoch_loss = running_loss / len(val_loader)
-        epoch_acc = 100.0 * correct / total
+                preds_all.append(preds.cpu())
+                targets_all.append(targets.cpu())
 
-        return {"loss": epoch_loss, "accuracy": epoch_acc}
+        # Concatenate all batches
+        preds_all = torch.cat(preds_all)
+        targets_all = torch.cat(targets_all)
 
-    def train(
-        self,
-        train_loader: DataLoader,
-        val_loader: Optional[DataLoader] = None,
-        epochs: int = 100,
-        early_stopping_patience: int = 10,
-        verbose: bool = True,
-    ) -> Dict[str, List[float]]:
-        """
-        Train the model for multiple epochs.
+        # IDS Metrics
+        val_acc = accuracy(preds_all, targets_all)
+        val_prec = precision(preds_all, targets_all)
+        val_rec = recall(preds_all, targets_all)
+        val_f1 = f1_score(preds_all, targets_all)
 
-        Args:
-            train_loader: Training data loader
-            val_loader: Validation data loader (optional)
-            epochs: Number of epochs to train
-            early_stopping_patience: Epochs to wait before early stopping
-            verbose: Whether to print training progress
-
-        Returns:
-            Training history dictionary
-        """
-        patience_counter = 0
-
-        for epoch in range(epochs):
-            start_time = time.time()
-
-            # Training
-            train_metrics = self.train_epoch(train_loader)
-            self.history["train_loss"].append(train_metrics["loss"])
-            self.history["train_acc"].append(train_metrics["accuracy"])
-
-            # Validation
-            if val_loader:
-                val_metrics = self.validate(val_loader)
-                self.history["val_loss"].append(val_metrics["loss"])
-                self.history["val_acc"].append(val_metrics["accuracy"])
-
-                # Check for improvement
-                if val_metrics["loss"] < self.best_val_loss:
-                    self.best_val_loss = val_metrics["loss"]
-                    self.best_val_acc = val_metrics["accuracy"]
-                    self.save_checkpoint("best_model.pth", epoch, val_metrics)
-                    patience_counter = 0
-                else:
-                    patience_counter += 1
-
-            # Learning rate scheduling
-            current_lr = self.optimizer.param_groups[0]["lr"]
-            self.history["lr"].append(current_lr)
-
-            if self.scheduler:
-                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    if val_loader:
-                        self.scheduler.step(val_metrics["loss"])
-                else:
-                    self.scheduler.step()
-
-            # Logging
-            if verbose:
-                elapsed = time.time() - start_time
-                msg = f"Epoch {epoch+1}/{epochs} | "
-                msg += f"Train Loss: {train_metrics['loss']:.4f}, "
-                msg += f"Train Acc: {train_metrics['accuracy']:.2f}%"
-
-                if val_loader:
-                    msg += f" | Val Loss: {val_metrics['loss']:.4f}, "
-                    msg += f"Val Acc: {val_metrics['accuracy']:.2f}%"
-
-                msg += f" | LR: {current_lr:.6f} | Time: {elapsed:.2f}s"
-                print(msg)
-
-            # Early stopping
-            if patience_counter >= early_stopping_patience:
-                print(f"Early stopping triggered after {epoch+1} epochs")
-                break
-
-            # Save periodic checkpoint
-            if (epoch + 1) % 10 == 0:
-                self.save_checkpoint(f"checkpoint_epoch_{epoch+1}.pth", epoch)
-
-        return self.history
-
-    def save_checkpoint(
-        self,
-        filename: str,
-        epoch: int,
-        metrics: Optional[Dict[str, float]] = None,
-    ) -> None:
-        """
-        Save a model checkpoint.
-
-        Args:
-            filename: Name of the checkpoint file
-            epoch: Current epoch number
-            metrics: Optional metrics to save
-        """
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "history": self.history,
-            "metrics": metrics or {},
+        return {
+            "loss": running_loss / len(val_loader),
+            "acc": val_acc,
+            "precision": val_prec,
+            "recall": val_rec,
+            "f1_score": val_f1,
         }
 
-        if self.scheduler:
-            checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
+    def train(
+            self,
+            train_loader: DataLoader,
+            val_loader: DataLoader,
+            epochs: int,
+            early_stopping_patience: int = 5,
+            verbose: bool = True,
+        ):
+            best_epoch = 0
+            patience_counter = 0
 
-        path = os.path.join(self.checkpoint_dir, filename)
-        torch.save(checkpoint, path)
+            for epoch in range(1, epochs + 1):
+                # ----------- TRAIN EPOCH --------------
+                train_stats = self.train_epoch(train_loader)
 
-    def load_checkpoint(self, filename: str) -> Dict[str, Any]:
-        """
-        Load a model checkpoint.
+                # ----------- VALIDATION ---------------
+                val_stats = self.validate(val_loader)
 
-        Args:
-            filename: Name of the checkpoint file
+                # Save metrics
+                self.history["train_loss"].append(train_stats["loss"])
+                self.history["train_acc"].append(train_stats["acc"])
+                self.history["val_loss"].append(val_stats["loss"])
+                self.history["val_acc"].append(val_stats["acc"])
+                self.history["precision"].append(val_stats["precision"])
+                self.history["recall"].append(val_stats["recall"])
+                self.history["f1_score"].append(val_stats["f1_score"])
 
-        Returns:
-            Checkpoint dictionary
-        """
-        path = os.path.join(self.checkpoint_dir, filename)
-        checkpoint = torch.load(path, map_location=self.device)
+                # Scheduler varsa → step
+                if self.scheduler:
+                    self.scheduler.step()
+                    self.history["lr"].append(self.scheduler.get_last_lr()[0])
 
-        self.model.load_state_dict(checkpoint["model_state_dict"])
-        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                # ----------- PRINT RESULTS ----------
+                if verbose:
+                    print(f"\nEpoch [{epoch}/{epochs}]")
+                    print(f"  Train Loss : {train_stats['loss']:.4f} | Train Acc : {train_stats['acc']:.2f}%")
+                    print(f"  Val Loss   : {val_stats['loss']:.4f} | Val Acc   : {val_stats['acc']:.2f}%")
+                    print(f"  Precision  : {val_stats['precision']:.4f}")
+                    print(f"  Recall     : {val_stats['recall']:.4f}")
+                    print(f"  F1 Score   : {val_stats['f1_score']:.4f}")
+                    if self.scheduler:
+                        print(f"  LR         : {self.history['lr'][-1]:.6f}")
 
-        if self.scheduler and "scheduler_state_dict" in checkpoint:
-            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+                # ----------- EARLY STOPPING ----------
+                if val_stats["loss"] < self.best_val_loss:
+                    self.best_val_loss = val_stats["loss"]
+                    self.best_val_acc  = val_stats["acc"]
+                    patience_counter = 0
+                    best_epoch = epoch
 
-        self.history = checkpoint.get("history", self.history)
+                    # SAVING BEST CHECKPOINT
+                    torch.save(self.model.state_dict(), os.path.join(self.checkpoint_dir, "best_model.pth"))
 
-        return checkpoint
+                else:
+                    patience_counter += 1
+                    if patience_counter >= early_stopping_patience:
+                        print(f"\nEarly stopping triggered at epoch {epoch} (best was {best_epoch})")
+                        break
+
+            return self.history

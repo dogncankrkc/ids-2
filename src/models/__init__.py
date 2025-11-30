@@ -1,9 +1,10 @@
 """
-CNN Model Architectures Module
+IDS CNN Models
 
-This module contains various CNN model architectures for different use cases.
+This package provides lightweight CNN architectures
+for Intrusion Detection Systems (binary + multiclass).
 """
 
-from .cnn_model import CNNModel, SimpleCNN, VGGStyleCNN
+from .cnn_model import IDS_CNN, create_ids_model
 
-__all__ = ["CNNModel", "SimpleCNN", "VGGStyleCNN"]
+__all__ = ["IDS_CNN", "create_ids_model"]

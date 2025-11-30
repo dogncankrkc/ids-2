@@ -1,232 +1,105 @@
 """
-CNN Model Architectures
+Lightweight CNN Architectures for IDS (Intrusion Detection System)
 
-This module defines various CNN model architectures that can be used
-for image classification and other computer vision tasks.
+This module defines a compact CNN architecture optimized for:
+    - Binary IDS classification  → using 'binary_label'
+    - Multiclass IDS classification  → using 'label2'
+    - Edge deployment (Raspberry Pi 4 via TFLite)
+
+Input format expected:
+    (batch_size, channels=1, height=7, width=10)
+
+The model is intentionally lightweight:
+    - < 1 million parameters
+    - Supports INT8 quantization for TFLite
+    - Fast inference on Raspberry Pi
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, List, Optional
 
 
-class CNNModel(nn.Module):
-    """
-    Base CNN Model class that provides common functionality
-    for all CNN architectures.
-    """
+# -------------------------------------------------------
+# Base class (optional, keeps code structured & clean)
+# -------------------------------------------------------
+class CNNBase(nn.Module):
+    """Base class with helper methods."""
 
     def __init__(self):
-        super(CNNModel, self).__init__()
+        super(CNNBase, self).__init__()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass - to be implemented by subclasses."""
-        raise NotImplementedError("Subclasses must implement forward method")
-
-    def count_parameters(self) -> int:
-        """Count the total number of trainable parameters."""
+    def count_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
-class SimpleCNN(CNNModel):
-    """
-    A simple CNN architecture for basic image classification tasks.
+# -------------------------------------------------------
+# IDS CNN Model – Main Model to be Used
+# -------------------------------------------------------
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-    Architecture:
-        - 2 Convolutional layers with ReLU activation and MaxPooling
-        - 2 Fully connected layers
-        - Dropout for regularization
+class IDS_CNN(nn.Module):
+    def __init__(self, num_classes=8):
+        super().__init__()
 
-    Args:
-        num_classes: Number of output classes
-        input_channels: Number of input channels (1 for grayscale, 3 for RGB)
-        input_size: Input image size (height, width) - default (32, 32)
-    """
+        # --- CONV LAYERS ---
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
 
-    def __init__(
-        self,
-        num_classes: int = 10,
-        input_channels: int = 3,
-        input_size: Tuple[int, int] = (32, 32),
-    ):
-        super(SimpleCNN, self).__init__()
+        self.pool = nn.MaxPool2d(2, 2)
+        self.dropout = nn.Dropout(0.3)
 
+        # --- INIT LATER ---
+        self.fc1 = nn.Linear(64 * 1 * 2, 64) 
+        self.fc2 = nn.Linear(64, num_classes)
         self.num_classes = num_classes
-        self.input_channels = input_channels
-        self.input_size = input_size
 
-        # Convolutional layers
-        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))   # → (batch, 16, 3,5)
+        x = self.pool(F.relu(self.conv2(x)))   # → (batch, 32, 1,2)
+        x = F.relu(self.conv3(x))              # → (batch, 64, 1,2)
 
-        # Pooling layer
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        x = self.dropout(x)
 
-        # Calculate the size after convolutions and pooling
-        conv_output_size = self._get_conv_output_size()
+        x = torch.flatten(x, 1)   # (batch, ???)
 
-        # Fully connected layers
-        self.fc1 = nn.Linear(conv_output_size, 256)
-        self.fc2 = nn.Linear(256, num_classes)
+        if self.fc1 is None:
+            in_features = x.size(1)            
+            print(f"[INFO] Dynamically setting fc1 input size = {in_features}")
 
-        # Dropout for regularization
-        self.dropout = nn.Dropout(0.5)
+            self.fc1 = nn.Linear(in_features, 64).to(x.device)
+            self.fc2 = nn.Linear(64, self.num_classes).to(x.device)
 
-    def _get_conv_output_size(self) -> int:
-        """Calculate the output size after convolutional layers."""
-        # After 2 pooling operations, size is reduced by factor of 4
-        h = self.input_size[0] // 4
-        w = self.input_size[1] // 4
-        return 64 * h * w
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through the network.
-
-        Args:
-            x: Input tensor of shape (batch_size, channels, height, width)
-
-        Returns:
-            Output tensor of shape (batch_size, num_classes)
-        """
-        # First convolutional block
-        x = self.pool(F.relu(self.bn1(self.conv1(x))))
-
-        # Second convolutional block
-        x = self.pool(F.relu(self.bn2(self.conv2(x))))
-
-        # Flatten
-        x = x.view(x.size(0), -1)
-
-        # Fully connected layers
-        x = self.dropout(F.relu(self.fc1(x)))
+        x = F.relu(self.fc1(x))
         x = self.fc2(x)
-
         return x
+    
+    def count_parameters(self):
+        """Trainable (update edilebilir) parametre sayısını döndürür."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
-
-class VGGStyleCNN(CNNModel):
+# -------------------------------------------------------
+# Model Factory Function
+# -------------------------------------------------------
+def create_ids_model(mode="binary", num_classes=None):
     """
-    A VGG-style CNN architecture with deeper convolutional layers.
-
-    Architecture:
-        - Multiple convolutional blocks with increasing filters
-        - Batch normalization after each conv layer
-        - MaxPooling after each block
-        - Fully connected classifier
+    Factory for creating the IDS CNN model.
 
     Args:
-        num_classes: Number of output classes
-        input_channels: Number of input channels
-        input_size: Input image size (height, width)
+        mode        : "binary" or "multiclass"
+        num_classes : required if mode="multiclass"
     """
 
-    def __init__(
-        self,
-        num_classes: int = 10,
-        input_channels: int = 3,
-        input_size: Tuple[int, int] = (32, 32),
-    ):
-        super(VGGStyleCNN, self).__init__()
+    if mode == "binary":
+        return IDS_CNN(num_classes=2)
 
-        self.num_classes = num_classes
-        self.input_channels = input_channels
-        self.input_size = input_size
+    elif mode == "multiclass":
+        assert num_classes is not None, \
+            "num_classes must be provided for multiclass mode"
+        return IDS_CNN(num_classes=num_classes)
 
-        # Feature extraction layers
-        self.features = nn.Sequential(
-            # Block 1
-            nn.Conv2d(input_channels, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            # Block 2
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            # Block 3
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-        )
-
-        # Calculate classifier input size
-        feature_size = self._get_feature_size()
-
-        # Classifier
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(feature_size, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes),
-        )
-
-    def _get_feature_size(self) -> int:
-        """Calculate the feature size after convolutional layers."""
-        # After 3 pooling operations, size is reduced by factor of 8
-        h = self.input_size[0] // 8
-        w = self.input_size[1] // 8
-        return 256 * h * w
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through the network.
-
-        Args:
-            x: Input tensor of shape (batch_size, channels, height, width)
-
-        Returns:
-            Output tensor of shape (batch_size, num_classes)
-        """
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
-
-
-def create_model(
-    model_type: str = "simple",
-    num_classes: int = 10,
-    input_channels: int = 3,
-    input_size: Tuple[int, int] = (32, 32),
-) -> CNNModel:
-    """
-    Factory function to create CNN models.
-
-    Args:
-        model_type: Type of model ("simple" or "vgg")
-        num_classes: Number of output classes
-        input_channels: Number of input channels
-        input_size: Input image size
-
-    Returns:
-        CNNModel instance
-    """
-    models = {
-        "simple": SimpleCNN,
-        "vgg": VGGStyleCNN,
-    }
-
-    if model_type not in models:
-        raise ValueError(f"Unknown model type: {model_type}. Available: {list(models.keys())}")
-
-    return models[model_type](
-        num_classes=num_classes,
-        input_channels=input_channels,
-        input_size=input_size,
-    )
+    else:
+        raise ValueError("mode must be 'binary' or 'multiclass'")
