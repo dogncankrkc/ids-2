@@ -1,0 +1,36 @@
+# Configuration for CIFAR-10 dataset
+
+model:
+  type: "simple"
+  num_classes: 10
+  input_channels: 3
+  input_size: [32, 32]
+
+data:
+  batch_size: 64
+  num_workers: 4
+  image_size: [32, 32]
+  # CIFAR-10 normalization values
+  mean: [0.4914, 0.4822, 0.4465]
+  std: [0.2470, 0.2435, 0.2616]
+
+training:
+  epochs: 200
+  learning_rate: 0.1
+  weight_decay: 0.0005
+  optimizer: "sgd"
+  scheduler: "cosine"
+  momentum: 0.9
+  early_stopping_patience: 20
+
+augmentation:
+  horizontal_flip: true
+  random_rotation: 0
+  color_jitter: false
+  random_crop: true
+  padding: 4
+
+checkpoint:
+  save_dir: "models/checkpoints/cifar10"
+
+seed: 42
