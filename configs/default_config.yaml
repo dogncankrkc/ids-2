@@ -1,0 +1,45 @@
+# Default configuration for CNN model training
+
+# Model configuration
+model:
+  type: "simple"  # Options: "simple", "vgg"
+  num_classes: 10
+  input_channels: 3
+  input_size: [32, 32]
+
+# Data configuration
+data:
+  train_dir: "data/processed/train"
+  val_dir: "data/processed/val"
+  test_dir: "data/processed/test"
+  batch_size: 32
+  num_workers: 4
+  image_size: [32, 32]
+
+# Training configuration
+training:
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: "adam"  # Options: "adam", "adamw", "sgd"
+  scheduler: "cosine"  # Options: "step", "cosine", "plateau", "exponential"
+  early_stopping_patience: 10
+
+# Data augmentation
+augmentation:
+  horizontal_flip: true
+  random_rotation: 10
+  color_jitter: true
+
+# Checkpoint configuration
+checkpoint:
+  save_dir: "models/checkpoints"
+  save_every: 10
+
+# Logging configuration
+logging:
+  log_dir: "logs"
+  verbose: true
+
+# Random seed for reproducibility
+seed: 42
