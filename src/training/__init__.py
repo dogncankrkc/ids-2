@@ -1,38 +1,25 @@
 """
-Training Module for IDS (CNN-based)
+Training Module
 
-This package exports:
-    - Trainer class
-    - Evaluation metrics (accuracy, precision, recall, F1)
-    - Loss function utilities for:
-        * Binary classification (BCEWithLogitsLoss)
-        * Multiclass classification (CrossEntropyLoss)
+Exports:
+    - Trainer: Main class to handle training loop
+    - Metrics: Accuracy, Precision, Recall, F1, Confusion Matrix
 """
 
 from .trainer import Trainer
-from .metrics import accuracy, precision, recall, f1_score
-import torch.nn as nn
-
-# LOSS SELECTION HELPERS
-def get_loss(binary: bool = True):
-    """
-    Returns appropriate loss function for IDS CNN:
-        - Binary   → BCEWithLogitsLoss
-        - Multiclass → CrossEntropyLoss
-    """
-    return nn.BCEWithLogitsLoss() if binary else nn.CrossEntropyLoss()
-
+from .metrics import (
+    accuracy,
+    precision,
+    recall,
+    f1_score,
+    confusion_matrix,  # <-- YENİ EKLENDİ
+)
 
 __all__ = [
-    # Trainer
     "Trainer",
-
-    # Metrics
     "accuracy",
     "precision",
     "recall",
     "f1_score",
-
-    # Loss selector
-    "get_loss",
+    "confusion_matrix",
 ]

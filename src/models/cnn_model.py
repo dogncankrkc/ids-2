@@ -15,24 +15,6 @@ The model is intentionally lightweight:
     - Fast inference on Raspberry Pi
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-
-# -------------------------------------------------------
-# Base class (optional, keeps code structured & clean)
-# -------------------------------------------------------
-class CNNBase(nn.Module):
-    """Base class with helper methods."""
-
-    def __init__(self):
-        super(CNNBase, self).__init__()
-
-    def count_parameters(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
-
 # -------------------------------------------------------
 # IDS CNN Model – Main Model to be Used
 # -------------------------------------------------------
@@ -65,13 +47,6 @@ class IDS_CNN(nn.Module):
         x = self.dropout(x)
 
         x = torch.flatten(x, 1)   # (batch, ???)
-
-        if self.fc1 is None:
-            in_features = x.size(1)            
-            print(f"[INFO] Dynamically setting fc1 input size = {in_features}")
-
-            self.fc1 = nn.Linear(in_features, 64).to(x.device)
-            self.fc2 = nn.Linear(64, self.num_classes).to(x.device)
 
         x = F.relu(self.fc1(x))
         x = self.fc2(x)

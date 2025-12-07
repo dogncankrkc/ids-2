@@ -15,6 +15,7 @@ from src.training.trainer import Trainer                # our trainer class
 from src.utils.helpers import (
     set_seed, get_device, get_optimizer, get_scheduler
 )
+# preprocess fonksiyonları artık 6 değer döndürüyor
 from src.data.preprocess import (
      preprocess_binary, preprocess_multiclass
 )
@@ -31,29 +32,47 @@ def create_ids_loaders(
     data_dir: str = "data/raw"
 ):
     """
-    Load CSV → preprocess → train/test split → DataLoader
+    Load CSV → preprocess → train/val/test split → DataLoader
     """
     df = load_raw_csv(data_dir=data_dir)
 
-    # --- Yeni preprocess.py çıktısına göre ---
+    # ---------------------------------------------------------
+    # DÜZELTME 1: Her iki modda da 6 değişkeni karşılıyoruz.
+    # (preprocess.py dosyasını güncellemiştik)
+    # ---------------------------------------------------------
     if mode == "binary":
-        X_train, X_test, y_train, y_test = preprocess_binary(df)
-        num_classes = 2
+        X_train, X_val, X_test, y_train, y_val, y_test = preprocess_binary(df)
+        # num_classes burada kullanılmıyor, model create ederken manuel 2 veriyoruz.
+    
     elif mode == "multiclass":
-        X_train, X_test, y_train, y_test = preprocess_multiclass(df)
-        # class sayısı config içinden alınmalı!
-        num_classes = None   # create_ids_model içinde handle edilecek
+        X_train, X_val, X_test, y_train, y_val, y_test = preprocess_multiclass(df)
+    
     else:
         raise ValueError("mode must be 'binary' or 'multiclass'")
 
-    # ---- TensorDataset dönüştürme ----
+    # ---------------------------------------------------------
+    # DÜZELTME 2: Tensor dönüşümleri (Train ve Val için)
+    # ---------------------------------------------------------
+    # Train
     X_train_t = torch.tensor(X_train, dtype=torch.float32).permute(0, 3, 1, 2)
-    X_test_t  = torch.tensor(X_test,  dtype=torch.float32).permute(0, 3, 1, 2)
     y_train_t = torch.tensor(y_train, dtype=torch.long)
-    y_test_t  = torch.tensor(y_test,  dtype=torch.long)
 
+    # Validation (Eğitim sırasında başarım ölçmek için)
+    X_val_t   = torch.tensor(X_val, dtype=torch.float32).permute(0, 3, 1, 2)
+    y_val_t   = torch.tensor(y_val, dtype=torch.long)
+
+    # Test (Eğitim bittikten sonra kullanmak istersen diye hazır tutuyoruz)
+    # Şimdilik loader'a eklemiyoruz ama istenirse eklenebilir.
+    # X_test_t  = torch.tensor(X_test, dtype=torch.float32).permute(0, 3, 1, 2)
+    # y_test_t  = torch.tensor(y_test, dtype=torch.long)
+
+    # ---------------------------------------------------------
+    # Dataset ve Loader Oluşturma
+    # ---------------------------------------------------------
     train_dataset = TensorDataset(X_train_t, y_train_t)
-    val_dataset   = TensorDataset(X_test_t,  y_test_t)   # burda val=test
+    val_dataset   = TensorDataset(X_val_t,   y_val_t)   # Artık gerçek Val seti!
+
+    print(f"[INFO] Train Size: {len(train_dataset)} | Val Size: {len(val_dataset)}")
 
     return {
         "train": DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
@@ -72,12 +91,13 @@ def main():
     # Set seed & device
     set_seed(config.get("seed", 42))
     device = get_device()
+    print(f"Using device: {device}")
 
     # ----------- DATA LOADERS (CSV) -------------
     loaders = create_ids_loaders(
         mode=args.mode,
         batch_size=config["data"]["batch_size"],
-        data_dir=config["data"]["raw_dir"]     #  # data/raw or data/processed
+        data_dir=config["data"]["raw_dir"]
     )
 
     # ----------- MODEL --------------------------

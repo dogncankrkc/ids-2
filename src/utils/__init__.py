@@ -4,7 +4,6 @@ Utility Module for IDS-CNN Project
 Provides:
     - Visualization tools (training curves, confusion matrix)
     - Reproducibility helpers (seed, device)
-    - Model IO (save/load)
 """
 
 from .visualization import (
@@ -15,8 +14,6 @@ from .visualization import (
 from .helpers import (
     set_seed,
     get_device,
-    save_model,
-    load_model,
     prepare_for_training,   
 )
 
@@ -29,10 +26,8 @@ __all__ = [
     # Helpers
     "set_seed",
     "get_device",
-    "save_model",
-    "load_model",
     "prepare_for_training",
 ]
 
 # Package version (optional)
-__version__ = "0.2.0"
+__version__ = "0.2.1"

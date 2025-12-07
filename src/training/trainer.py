@@ -2,7 +2,6 @@
 CNN Model Trainer – IDS Version (Binary & Multiclass Support)
 
 This trainer is compatible with:
-    - Binary IDS classification (using BCEWithLogitsLoss)
     - Multiclass IDS classification (using CrossEntropyLoss)
     - Evaluation metrics from src/evaluation/metrics.py
 

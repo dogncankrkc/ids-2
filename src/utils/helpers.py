@@ -42,58 +42,6 @@ def get_device():
         return torch.device("cpu")
 
 
-def save_model(
-    model: nn.Module,
-    path: str,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> None:
-    """
-    Save a trained model to disk.
-
-    Args:
-        model: PyTorch model to save
-        path: Path to save the model
-        metadata: Optional metadata to save with the model
-    """
-    os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-
-    save_dict = {
-        "model_state_dict": model.state_dict(),
-        "metadata": metadata or {},
-    }
-
-    torch.save(save_dict, path)
-    print(f"Model saved to {path}")
-
-
-def load_model(
-    model: nn.Module,
-    path: str,
-    device: Optional[torch.device] = None,
-) -> Dict[str, Any]:
-    """
-    Load a trained model from disk.
-
-    Args:
-        model: PyTorch model instance to load weights into
-        path: Path to the saved model
-        device: Device to load the model to
-
-    Returns:
-        Dictionary containing metadata
-    """
-    if device is None:
-        device = get_device()
-
-    checkpoint = torch.load(path, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.to(device)
-
-    print(f"Model loaded from {path}")
-
-    return checkpoint.get("metadata", {})
-
-
 def count_parameters(model: nn.Module) -> int:
     """
     Count the total number of trainable parameters.

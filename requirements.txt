@@ -10,14 +10,21 @@ numpy>=1.21.0
 pandas>=1.3.0
 Pillow>=8.0.0
 scikit-learn>=1.0.0
-joblib>=1.0.1        # <-- scaler & encoder save/load
+joblib>=1.0.1        # scaler & encoder save/load
+threadpoolctl>=2.0.0 # scikit-learn dependency
 
 # Configuration
-PyYAML>=6.0          # configs/multi_config.yaml vs binary_config.yaml
+PyYAML>=6.0
 
-# Visualization
+# Visualization & Plotting Dependencies
 matplotlib>=3.5.0
 seaborn>=0.11.0
+pyparsing>=2.4.7     # <-- Şu anki hatanın kaynağı
+cycler>=0.10.0       # <-- Matplotlib dependency
+kiwisolver>=1.3.1    # <-- Matplotlib dependency
+fonttools>=4.22.0    # <-- Matplotlib dependency
+contourpy>=1.0.1     # <-- Matplotlib dependency
+python-dateutil>=2.7 # <-- Matplotlib dependency
 
 # Progress tracking
 tqdm>=4.64.0
@@ -37,5 +44,5 @@ flake8>=5.0.0
 isort>=5.10.0
 mypy>=0.970
 
-# (Optional) Model summary – pretty output
-torchinfo>=1.8.0     # or: pip install torch-summary
+# (Optional) Model summary
+torchinfo>=1.8.0

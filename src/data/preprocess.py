@@ -23,7 +23,6 @@ import torch
 # CONFIG
 # ------------------------
 FEATURE_SHAPE = (7, 10, 1)  # CNN expects → 1 x 7 x 10
-TEST_SIZE = 0.2             # 80 train / 20 test
 
 # Labels to drop (not used as features)
 DROP_COLS_COMMON = [
@@ -120,6 +119,27 @@ def _ensure_dir(path: str):
     if d:
         os.makedirs(d, exist_ok=True)
 
+def split_train_val_test(X, y, test_size=0.15, val_size=0.15):
+    """
+    Veriyi 3 parçaya böler:
+    1. Önce %15 Test setini ayırır (Kenara kilitleriz).
+    2. Kalan parçadan %15 Validation ayırır.
+    3. Geriye kalan en büyük parça Train olur.
+    """
+    # 1. Adım: Test setini ayır (Stratify: Sınıf dengesini koru)
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=42, stratify=y
+    )
+    
+    # 2. Adım: Kalanı (X_temp) Train ve Validation olarak ayır
+    # val_size oranını X_temp üzerinden alırız.
+    # Örneğin X_temp %85 ise, bunun %15'i val olur.
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=val_size, random_state=42, stratify=y_temp
+    )
+    
+    # Sırayla 6 parça döndürüyoruz
+    return X_train, X_val, X_test, y_train, y_val, y_test
 
 # ------------------------
 # BINARY CLASSIFICATION
@@ -127,35 +147,32 @@ def _ensure_dir(path: str):
 def preprocess_binary(
     df: pd.DataFrame,
     scaler_path: str = "models/scaler_binary.pkl",
-    test_size: float = TEST_SIZE,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple:
     """
-    Preprocess data for **binary classification** (benign vs attack).
-
-    Returns:
-        X_train, X_test, y_train, y_test  → ready for CNN
+    Binary (Normal vs Attack) verisi hazırlar.
+    Dönüş: (X_train, X_val, X_test, y_train, y_val, y_test)
     """
+    # Gereksiz sütunları at
     df = df.drop(columns=DROP_COLS_COMMON, errors="ignore")
 
-    # target
-    y = df["binary_label"].values  # 0 / 1
-
-    # sadece seçili 70 feature
+    # Hedef ve Özellikler
+    y = df["binary_label"].values  # 0 veya 1
     X = df[SELECTED_FEATURES].values
 
+    # Ölçeklendirme (StandardScaler)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
+    # Scaler'ı kaydet (Inference için lazım olacak)
     _ensure_dir(scaler_path)
     joblib.dump(scaler, scaler_path)
 
-    # reshape → (N, 7, 10, 1)
-    X_scaled = X_scaled.reshape(-1, FEATURE_SHAPE[0], FEATURE_SHAPE[1], FEATURE_SHAPE[2])
+    # CNN için Reshape (Örn: 7x10)
+    # Boyut: (Sample_Sayısı, 7, 10, 1) -> Sondaki 1 kanal sayısı
+    X_reshaped = X_scaled.reshape(-1, FEATURE_SHAPE[0], FEATURE_SHAPE[1], FEATURE_SHAPE[2])
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=test_size, random_state=42, stratify=y
-    )
-    return X_train, X_test, y_train, y_test
+    # 3'lü ayrıma gönder
+    return split_train_val_test(X_reshaped, y)
 
 
 # ------------------------
@@ -165,58 +182,67 @@ def preprocess_multiclass(
     df: pd.DataFrame,
     scaler_path: str = "models/scaler_multi.pkl",
     encoder_path: str = "models/label_encoder.pkl",
-    test_size: float = TEST_SIZE,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple:
     """
-    Preprocess data for **multiclass IDS** (dos, recon, malware, ...).
-
-    Returns:
-        X_train, X_test, y_train, y_test (reshaped for CNN)
+    Çok sınıflı (DoS, Probe, vb.) veri hazırlar.
+    Dönüş: (X_train, X_val, X_test, y_train, y_val, y_test)
     """
     df = df.drop(columns=DROP_COLS_COMMON, errors="ignore")
 
+    # Etiketleri Sayısal Hale Getir (Label Encoding)
     encoder = LabelEncoder()
     y = encoder.fit_transform(df["label2"])
 
+    # --- ÖNEMLİ: Hangi sayı hangi atağa denk geliyor görelim ---
+    mapping = dict(zip(encoder.classes_, encoder.transform(encoder.classes_)))
+    print(f"\n[INFO] Multiclass Label Mapping: {mapping}")
+    # -----------------------------------------------------------
+
+    # Encoder'ı kaydet (Inference'da tersine çevirmek için)
     _ensure_dir(encoder_path)
     joblib.dump(encoder, encoder_path)
 
+    # Özellikleri seç ve ölçeklendir
     X = df[SELECTED_FEATURES].values
-
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
     _ensure_dir(scaler_path)
     joblib.dump(scaler, scaler_path)
 
-    X_scaled = X_scaled.reshape(-1, FEATURE_SHAPE[0], FEATURE_SHAPE[1], FEATURE_SHAPE[2])
+    # CNN için Reshape
+    X_reshaped = X_scaled.reshape(-1, FEATURE_SHAPE[0], FEATURE_SHAPE[1], FEATURE_SHAPE[2])
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=test_size, random_state=42, stratify=y
-    )
-    return X_train, X_test, y_train, y_test
-
+    # 3'lü ayrıma gönder
+    return split_train_val_test(X_reshaped, y)
 
 # ------------------------
 # SINGLE SAMPLE PREPROCESSING (INFERENCE)
 # ------------------------
 def preprocess_single_sample(df_row: pd.DataFrame) -> torch.Tensor:
     """
-    Preprocess a SINGLE CSV row for inference.
-
-    Input:
-        df_row: DataFrame (1 row) or Series
-    Output:
-        torch tensor → shape (1, 1, 7, 10)
+    Canlı sistemde tek bir satır veri geldiğinde kullanılır.
+    Çıktı: (1, 1, 7, 10) boyutunda Tensor.
     """
+    # Tek satır mı, seri mi kontrol et
     if isinstance(df_row, pd.DataFrame):
-        row = df_row[SELECTED_FEATURES].values  # (1, 70)
+        row = df_row[SELECTED_FEATURES].values
     else:
-        # pd.Series ise
-        row = df_row[SELECTED_FEATURES].to_frame().T.values  # (1, 70)
+        row = df_row[SELECTED_FEATURES].to_frame().T.values
 
-    scaler = joblib.load("models/scaler_multi.pkl")
+    # Kaydedilmiş Scaler'ı yükle (Test verisini EĞİTİM scaler'ı ile dönüştürmeliyiz)
+    # Not: Binary mi Multiclass mı kullandığına göre buradaki path değişebilir.
+    # Varsayılan olarak multiclass scaler yüklüyoruz.
+    try:
+        scaler = joblib.load("models/scaler_multi.pkl")
+    except FileNotFoundError:
+        # Eğer henüz multi yoksa binary dene
+        scaler = joblib.load("models/scaler_binary.pkl")
+        
     x_scaled = scaler.transform(row)
 
+    # Reshape: (1 örnek, 1 kanal, 7 yükseklik, 10 genişlik)
+    # PyTorch formatına uygun hale getirdik.
     x_reshaped = x_scaled.reshape(1, 1, 7, 10)
+    
     return torch.tensor(x_reshaped, dtype=torch.float32)

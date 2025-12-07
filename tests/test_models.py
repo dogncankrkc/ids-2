@@ -15,7 +15,7 @@ class TestIDSModel:
         assert model.fc2.out_features == 2   # binary IDS
 
     def test_init_multiclass(self):
-        model = IDS_CNN(num_classes=8)   # 7 değil 8 olacak!
+        model = IDS_CNN(num_classes=8)   
         assert model.fc2.out_features == 8
 
     def test_forward_shape(self):

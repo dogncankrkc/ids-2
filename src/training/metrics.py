@@ -1,89 +1,59 @@
 """
-Evaluation Metrics
+Evaluation Metrics (Optimized with Scikit-Learn)
 
-This module provides various metrics for evaluating CNN model performance.
+This module provides high-performance metrics for evaluating CNN model performance.
+It wraps sklearn.metrics to maintain compatibility with the existing trainer loop.
 """
 
 from typing import Optional
-
 import torch
 import numpy as np
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score as sklearn_f1_score,
+    confusion_matrix as sklearn_confusion_matrix
+)
 
-
-def accuracy(
-    predictions: torch.Tensor,
-    targets: torch.Tensor,
-) -> float:
+def _prepare_data(predictions: torch.Tensor, targets: torch.Tensor):
     """
-    Calculate accuracy.
-
-    Args:
-        predictions: Model predictions (logits or class indices)
-        targets: Ground truth labels
-
-    Returns:
-        Accuracy as a percentage
+    Helper to move tensors to CPU and convert to numpy for sklearn.
     """
+    # Eğer logits geldiyse (batch, num_classes) ve argmax gerekiyorsa
     if predictions.dim() > 1:
         predictions = predictions.argmax(dim=1)
+    
+    # CPU'ya al ve numpy array yap (Gradient takibini kopararak)
+    preds_np = predictions.detach().cpu().numpy()
+    targets_np = targets.detach().cpu().numpy()
+    
+    return preds_np, targets_np
 
-    correct = (predictions == targets).sum().item()
-    total = targets.size(0)
 
-    return 100.0 * correct / total
+def accuracy(predictions: torch.Tensor, targets: torch.Tensor) -> float:
+    """
+    Calculate accuracy using sklearn.
+    Returns percentage (0-100).
+    """
+    p, t = _prepare_data(predictions, targets)
+    # Sklearn 0-1 arası döner, trainer.py yüzde beklediği için 100 ile çarpıyoruz.
+    return accuracy_score(t, p) * 100.0
 
 
 def precision(
     predictions: torch.Tensor,
     targets: torch.Tensor,
-    num_classes: Optional[int] = None,
+    num_classes: Optional[int] = None, # İmza uyumu için tutuyoruz
     average: str = "macro",
 ) -> float:
     """
-    Calculate precision.
-
-    Args:
-        predictions: Model predictions
-        targets: Ground truth labels
-        num_classes: Number of classes
-        average: Averaging method ('macro', 'micro', 'weighted')
-
-    Returns:
-        Precision score
+    Calculate precision using sklearn.
+    Returns fraction (0-1).
     """
-    if predictions.dim() > 1:
-        predictions = predictions.argmax(dim=1)
-
-    predictions = predictions.cpu().numpy()
-    targets = targets.cpu().numpy()
-
-    if num_classes is None:
-        num_classes = max(predictions.max(), targets.max()) + 1
-
-    precision_scores = []
-    weights = []
-
-    for cls in range(num_classes):
-        tp = np.sum((predictions == cls) & (targets == cls))
-        fp = np.sum((predictions == cls) & (targets != cls))
-
-        if tp + fp > 0:
-            precision_scores.append(tp / (tp + fp))
-        else:
-            precision_scores.append(0.0)
-
-        weights.append(np.sum(targets == cls))
-
-    if average == "macro":
-        return float(np.mean(precision_scores))
-    elif average == "micro":
-        tp_total = np.sum(predictions == targets)
-        return float(tp_total / len(targets))
-    elif average == "weighted":
-        weights = np.array(weights) / sum(weights)
-        return float(np.sum(np.array(precision_scores) * weights))
-    else:
-        raise ValueError(f"Unknown average method: {average}")
+    p, t = _prepare_data(predictions, targets)
+    # zero_division=0: Tahmin edilmeyen sınıflar için hata vermek yerine 0 döner.
+    return float(precision_score(t, p, average=average, zero_division=0))
 
 
 def recall(
@@ -93,50 +63,11 @@ def recall(
     average: str = "macro",
 ) -> float:
     """
-    Calculate recall.
-
-    Args:
-        predictions: Model predictions
-        targets: Ground truth labels
-        num_classes: Number of classes
-        average: Averaging method ('macro', 'micro', 'weighted')
-
-    Returns:
-        Recall score
+    Calculate recall using sklearn.
+    Returns fraction (0-1).
     """
-    if predictions.dim() > 1:
-        predictions = predictions.argmax(dim=1)
-
-    predictions = predictions.cpu().numpy()
-    targets = targets.cpu().numpy()
-
-    if num_classes is None:
-        num_classes = max(predictions.max(), targets.max()) + 1
-
-    recall_scores = []
-    weights = []
-
-    for cls in range(num_classes):
-        tp = np.sum((predictions == cls) & (targets == cls))
-        fn = np.sum((predictions != cls) & (targets == cls))
-
-        if tp + fn > 0:
-            recall_scores.append(tp / (tp + fn))
-        else:
-            recall_scores.append(0.0)
-
-        weights.append(np.sum(targets == cls))
-
-    if average == "macro":
-        return float(np.mean(recall_scores))
-    elif average == "micro":
-        tp_total = np.sum(predictions == targets)
-        return float(tp_total / len(targets))
-    elif average == "weighted":
-        weights = np.array(weights) / sum(weights)
-        return float(np.sum(np.array(recall_scores) * weights))
-    else:
-        raise ValueError(f"Unknown average method: {average}")
+    p, t = _prepare_data(predictions, targets)
+    return float(recall_score(t, p, average=average, zero_division=0))
 
 
 def f1_score(
@@ -146,23 +77,11 @@ def f1_score(
     average: str = "macro",
 ) -> float:
     """
-    Calculate F1 score.
-
-    Args:
-        predictions: Model predictions
-        targets: Ground truth labels
-        num_classes: Number of classes
-        average: Averaging method
-
-    Returns:
-        F1 score
+    Calculate F1 score using sklearn.
+    Returns fraction (0-1).
     """
-    prec = precision(predictions, targets, num_classes, average)
-    rec = recall(predictions, targets, num_classes, average)
-
-    if prec + rec > 0:
-        return 2 * (prec * rec) / (prec + rec)
-    return 0.0
+    p, t = _prepare_data(predictions, targets)
+    return float(sklearn_f1_score(t, p, average=average, zero_division=0))
 
 
 def confusion_matrix(
@@ -171,37 +90,25 @@ def confusion_matrix(
     num_classes: Optional[int] = None,
 ) -> np.ndarray:
     """
-    Calculate confusion matrix.
-
-    Args:
-        predictions: Model predictions
-        targets: Ground truth labels
-        num_classes: Number of classes
-
-    Returns:
-        Confusion matrix as numpy array
+    Calculate confusion matrix using sklearn.
+    Returns numpy array.
     """
-    if predictions.dim() > 1:
-        predictions = predictions.argmax(dim=1)
+    p, t = _prepare_data(predictions, targets)
+    return sklearn_confusion_matrix(t, p)
 
-    predictions = predictions.cpu().numpy()
-    targets = targets.cpu().numpy()
-
-    if num_classes is None:
-        num_classes = max(predictions.max(), targets.max()) + 1
-
-    matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
-
-    for pred, target in zip(predictions, targets):
-        matrix[target, pred] += 1
-
-    return matrix
 
 def get_predictions_from_logits(logits: torch.Tensor) -> torch.Tensor:
+    """
+    Model çıktısını (logits) sınıf tahminlerine (index) çevirir.
+    
+    Binary case (1 output): Sigmoid > 0.5
+    Multiclass case (N outputs): Argmax
+    """
     # Binary case → output shape: (batch, 1) veya (batch,)
     if logits.dim() == 1 or logits.shape[1] == 1:
         probs = torch.sigmoid(logits)
         return (probs >= 0.5).long()
 
-    # Multiclass case
+    # Multiclass case (batch, num_classes)
+    # Senin modelin binary modda bile 2 output verdiği için burası çalışacak (Doğru olan bu)
     return torch.argmax(logits, dim=1)
