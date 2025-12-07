@@ -63,29 +63,40 @@ def plot_confusion_matrix(
     save_path: Optional[str] = None,
     figsize: Tuple[int, int] = (8, 6),
     cmap: str = "Blues",
+    normalize: bool = False,  
 ) -> None:
     """
-    Plot a confusion matrix.
-
-    Args:
-        cm: Confusion matrix array
-        class_names: Names of the classes
-        save_path: Path to save the figure (optional)
-        figsize: Figure size
-        cmap: Colormap for the plot
+    Confusion matrix çizer. 
+    normalize=True yapılırsa değerleri 0-1 arasına (yüzdelik) oranlar.
     """
     num_classes = len(cm)
 
     if class_names is None:
         class_names = [str(i) for i in range(num_classes)]
 
+    # --- normalization logic  ---
+    if normalize:
+        cm_float = cm.astype('float') / (cm.sum(axis=1)[:, np.newaxis] + 1e-9)
+        title = "Normalized Confusion Matrix"
+        fmt = ".2f"  # 0.95 format
+    else:
+        cm_float = cm
+        title = "Confusion Matrix"
+        fmt = "d"    # Integer format
+    # ------------------------------------
+
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Create heatmap
-    im = ax.imshow(cm, interpolation="nearest", cmap=cmap)
+    # Plot the heatmap
+    im = ax.imshow(cm_float, interpolation="nearest", cmap=cmap)
+    
+    # If normalized, fix color scale between 0 and 1
+    if normalize:
+        im.set_clim(0., 1.)
+        
     ax.figure.colorbar(im, ax=ax)
 
-    # Set labels
+    # Axis labels
     ax.set(
         xticks=np.arange(num_classes),
         yticks=np.arange(num_classes),
@@ -93,27 +104,28 @@ def plot_confusion_matrix(
         yticklabels=class_names,
         ylabel="True Label",
         xlabel="Predicted Label",
-        title="Confusion Matrix",
+        title=title,
     )
 
-    # Rotate x-axis labels
+    # Rotate the tick labels
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
-    # Add text annotations
-    thresh = cm.max() / 2.0
+    # Write values inside the boxes
+    thresh = cm_float.max() / 2.0
     for i in range(num_classes):
         for j in range(num_classes):
             ax.text(
-                j, i, format(cm[i, j], "d"),
+                j, i, format(cm_float[i, j], fmt),
                 ha="center", va="center",
-                color="white" if cm[i, j] > thresh else "black",
+                color="white" if cm_float[i, j] > thresh else "black",
+                fontsize=10
             )
 
     plt.tight_layout()
 
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.show()
+        print(f"Saved plot to {save_path}")
 
 def plot_learning_rate(
     history: Dict[str, List[float]],
