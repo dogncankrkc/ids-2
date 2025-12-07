@@ -1,143 +1,211 @@
-# IDS — CNN-based Intrusion Detection (Team README)
+# IDS-CNN: Network Intrusion Detection System
 
-Lightweight pipeline for network Intrusion Detection (IDS) using a compact
-CNN. Input is tabular CSV data (70 selected features) reshaped to
-`(1, 7, 10)` for the model. The project supports both binary and
-multiclass classification.
+A lightweight CNN-based intrusion detection system that transforms tabular network traffic features into a 2D representation for classification. The system supports both binary (benign vs attack) and multiclass (attack type) detection.
 
-Keep this README short, actionable and team-oriented — include high-level
-purpose, how to run things locally, contribution guidelines and where to
-find important project pieces.
+---
 
-## Project Structure
+## 📋 Overview
+
+This project uses a Convolutional Neural Network (CNN) to detect network intrusions from tabular data. 70 carefully selected network features are reshaped into a `(1, 7, 10)` format, allowing the CNN to learn spatial patterns in network traffic behavior.
+
+**Key Features:**
+- Binary classification: Benign vs Attack
+- Multiclass classification: 8 attack categories (DoS, DDoS, Recon, MITM, Bruteforce, Web, Malware)
+- Automatic train/validation/test split
+- Model checkpointing and early stopping
+- Comprehensive metrics (accuracy, precision, recall, F1-score)
+- Easy-to-use configuration files
+
+---
+
+## 📁 Project Structure
 
 ```bash
 ids-1/
-├── configs/                # YAML configs for training
-│   ├── ids_binary.yaml
-│   └── ids_multiclass.yaml
+├── configs/
+│   ├── binary_config.yaml       # Binary classification settings
+│   └── multiclass_config.yaml   # Multiclass classification settings
 │
 ├── data/
-│   ├── raw/                # put all CSV datasets here  👈  (*.csv)
-│   ├── processed/          # automatic output of preprocessing
-│   └── external/           # optional / outside data
+│   └── raw/                     # Place your CSV files here
 │
 ├── models/
-│   ├── checkpoints/        # auto-saved checkpoints during training
-│   └── final/              # best/final models
-│       └── final_model.pth
-│   ├── scaler_multi.pkl
-│   └── label_encoder.pkl
+│   ├── checkpoints/             # Training checkpoints
+│   ├── scaler_binary.pkl        # Feature scaler (binary)
+│   ├── scaler_multi.pkl         # Feature scaler (multiclass)
+│   └── label_encoder.pkl        # Label encoder (multiclass)
 │
-├── outputs/
-│   └── prediction_results_multiclass.csv   # test predictions
-│
-├── notebooks/
-│   └── 01_training_example.ipynb           # experiments / visualization
+├── outputs/                     # Test results and visualizations
 │
 ├── src/
-│   ├── data/              # dataset, preprocessing, transforms
-│   ├── models/            # CNN architectures
-│   ├── training/          # trainer, metrics, callbacks
-│   ├── utils/             # helpers & visualization tools
-│   └── testing/           # test_ids.py → evaluate trained model
+│   ├── data/                    # Data loading and preprocessing
+│   ├── models/                  # CNN model architecture
+│   ├── training/                # Training loop and metrics
+│   ├── utils/                   # Helper functions
+│   └── testing/                 # Evaluation scripts
 │
-├── train.py               # CLI training entrypoint
-├── inference.py           # single sample inference example
-├── requirements.txt
-└── README.md
+├── notebooks/
+│   └── 01_training_example.ipynb  # Training example
+│
+├── tests/                       # Unit tests
+├── train.py                     # Training script
+├── inference.py                 # Inference script
+└── requirements.txt             # Dependencies
 ```
 
-**Purpose & Scope**
-- Build and evaluate a compact CNN-based IDS from tabular features.
-- Provide reusable preprocessing, training and inference utilities
-  so team members can iterate on models and experiments.
+---
 
-**Quick Start (local)**
+## 🚀 Quick Start
 
-- Create and activate a virtual environment:
+### 1. Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/dogncankrkc/ids-1.git
+cd ids-1
+
+# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate
-```
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-- Install dependencies:
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
 pip install -e .
 ```
 
-**Prepare data**
-- Put one or more CSV files in `data/raw/`. The loader concatenates all
-  `*.csv` files found there (`src/data/dataset.py`).
-- Required label columns:
-  - `binary_label` — binary classification (0 = benign, 1 = attack)
-  - `label2` — multiclass label for attack category
-- Feature selection (70 features) and preprocessing rules are in
-  `src/data/preprocess.py` (`SELECTED_FEATURES`). Preprocessing saves
-  scalers/encoders to `models/` (e.g. `models/scaler_multi.pkl`).
+### 2. Prepare Your Data
 
-**Run training**
-- Binary example:
+Place your CSV files in the `data/raw/` folder. The system will automatically load and concatenate all CSV files.
 
+**Required columns:**
+- `binary_label`: For binary classification (0 = benign, 1 = attack)
+- `label2`: For multiclass classification (attack type names)
+- 70 network features (see `src/data/preprocess.py` for the complete list)
+
+### 3. Train a Model
+
+**Binary Classification:**
 ```bash
-python train.py --config configs/ids_binary.yaml --mode binary
+python train.py --config configs/binary_config.yaml --mode binary
 ```
 
-- Multiclass example:
-
+**Multiclass Classification:**
 ```bash
-python train.py --config configs/ids_multiclass.yaml --mode multiclass
+python train.py --config configs/multiclass_config.yaml --mode multiclass
 ```
 
-Notes:
-- `train.py` reads the config YAML for hyperparameters, paths and logging.
-- Checkpoints and the final model are stored under `models/checkpoints`.
+The training script will:
+- Load and preprocess your data
+- Split into train/validation/test sets (60/20/20)
+- Train the CNN model
+- Save checkpoints to `models/checkpoints/`
+- Save the final model and training history
 
-**Inference**
-- Use `inference.py` for a simple example that expects a one-row CSV
-  (see `preprocess_single_sample` in `src/data/preprocess.py`).
+### 4. Run Inference
 
 ```bash
 python inference.py
 ```
 
-Programmatic usage: preprocess with `preprocess_single_sample`, load the
-model with `src.utils.helpers.load_model` or `IDS_CNN` and run a forward pass.
+Edit the script to specify:
+- `sample_path`: Path to a single-row CSV file
+- `model_path`: Path to your trained model checkpoint
 
-**Configuration**
-- Configs live in `configs/` and follow this structure: `model`, `data`,
-  `training`, `checkpoint`, `logging`, `seed`. Edit to change hyperparams
-  or file paths.
+---
 
-**Tests & Code Quality**
-- Run tests:
+## ⚙️ Configuration
 
+Training parameters can be customized in YAML config files:
+
+```yaml
+model:
+  type: "ids_cnn"
+  num_classes: 2          # 2 for binary, 8 for multiclass
+  input_channels: 1
+  input_size: [7, 10]
+
+training:
+  epochs: 40
+  learning_rate: 0.001
+  optimizer: "adam"
+  scheduler: "cosine"
+  early_stopping_patience: 6
+```
+
+---
+
+## 📊 Model Architecture
+
+The CNN model (`IDS_CNN`) consists of:
+- 3 convolutional layers (16 → 32 → 64 filters)
+- MaxPooling and Dropout for regularization
+- 2 fully connected layers
+- Adaptive to both binary and multiclass tasks
+
+**Model size:** < 1M parameters (suitable for edge deployment)
+
+---
+
+## 🧪 Testing
+
+Run unit tests:
 ```bash
 pytest tests/ -v
 ```
 
-- For development, use the `dev` extras in `setup.py` or run the formatters
-  and linters locally (black, flake8, isort, mypy).
+Run evaluation on test set:
+```bash
+python -m src.testing.test_ids
+```
 
-**For Contributors / Team**
-- Keep changes small and focused. Prefer descriptive commits.
-- Update `SELECTED_FEATURES` and docs if you change feature selection.
-- When adding new experiments, add a short notebook or script under
-  `notebooks/` and include which config you used.
-- If you add new data columns, update `src/data/preprocess.py` and add
-  unit tests under `tests/`.
+---
 
-**Where to look next**
-- `src/data/preprocess.py` — preprocessing, scaler/encoder saving
-- `src/models/cnn_model.py` — model implementation and factory
-- `src/training/trainer.py` — training loop, metrics, checkpointing
+## 📓 Jupyter Notebook
 
-**Contact / Maintainers**
-- Primary: `dogncankrkc` (repo owner). Add maintainers in GitHub settings
-  or list emails here as the team grows.
+Explore the training process interactively:
+```bash
+jupyter notebook notebooks/01_training_example.ipynb
+```
 
-License: MIT
+---
+
+## 🔍 Key Files
+
+| File | Description |
+|------|-------------|
+| `src/data/preprocess.py` | Feature selection and preprocessing |
+| `src/models/cnn_model.py` | CNN architecture |
+| `src/training/trainer.py` | Training loop with metrics |
+| `train.py` | Main training script |
+| `inference.py` | Prediction on new samples |
+
+---
+
+## 📈 Results
+
+The model outputs are saved in `outputs/` including:
+- Confusion matrices (normalized and counts)
+- Prediction results CSV
+- Training history plots
+
+---
+
+## 🤝 Contributing
+
+1. Keep commits small and focused
+2. Update tests when adding features
+3. Document configuration changes
+4. Use formatters: `black`, `isort`, `flake8`
+
+---
+
+## 📧 Contact
+
+**Maintainer:** Doğancan Karakoç ([@dogncankrkc](https://github.com/dogncankrkc))
+
+---
+
+## 📄 License
+
+MIT License - see LICENSE file for details
 
