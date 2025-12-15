@@ -1,162 +1,232 @@
 """
-Dataset Generator Script for CIC-IoT-2023.
+Dataset Generator Script for CIC-IoT-2023 (CAPPED + SMOTE).
 
-Purpose:
-- Reads the massive raw CSV file in chunks to save RAM.
-- Explicitly removes 'nan' (null) values.
-- Maps detailed attack labels to 8 main categories (DDoS, DoS, Web, etc.).
-- Collects exactly 50,000 samples per category (caps majority classes).
-- Collects ALL samples for minority classes (Web, Backdoor, etc.) if they are < 50k.
-- Saves a new, lightweight, and balanced CSV file for training.
+Pipeline:
+1. Read massive raw CSV in chunks (RAM-safe)
+2. Map raw labels → 8 attack categories
+3. Drop raw label columns
+4. Cap dataset:
+   - Benign: EXACT 1,000,000
+   - Each attack class: max 100,000
+5. Clean features:
+   - Inf  -> removed
+   - NaN  -> filled with feature mean (GLOBAL)
+6. Apply SMOTE ONLY on attack classes that have < 100k samples
+7. Create:
+   - multiclass_label (8-class)
+   - binary_label (Benign=0, Attack=1)
+8. Save final dataset
 """
 
-import pandas as pd
 import os
 import numpy as np
+import pandas as pd
 
-# ------------------------
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from imblearn.over_sampling import SMOTE
+
+# ============================
 # CONFIGURATION
-# ------------------------
-# Input file (The huge raw dataset)
+# ============================
+
 INPUT_PATH = "data/raw/CIC2023_FULL_MERGED.csv"
+OUTPUT_PATH = "data/processed/CIC2023_CAPPED_SMOTE.csv"
 
-# Output file (The clean, balanced dataset to be created)
-OUTPUT_PATH = "data/processed/CIC2023_Balanced_50k.csv"
+BENIGN_CAP = 1_000_000
+ATTACK_CAP = 100_000
+CHUNK_SIZE = 1_000_000
 
-# Target samples per class (Cap limit)
-SAMPLES_PER_CLASS = 50000 
+SELECTED_FEATURES = [
+    'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate',
+    'fin_flag_number', 'syn_flag_number', 'rst_flag_number',
+    'psh_flag_number', 'ack_flag_number', 'ece_flag_number',
+    'cwr_flag_number', 'ack_count', 'syn_count', 'fin_count',
+    'rst_count', 'HTTP', 'HTTPS', 'DNS', 'Telnet', 'SMTP', 'SSH',
+    'IRC', 'TCP', 'UDP', 'DHCP', 'ARP', 'ICMP', 'IGMP', 'IPv',
+    'LLC', 'Tot sum', 'Min', 'Max', 'AVG', 'Std', 'Tot size',
+    'IAT', 'Number', 'Variance'
+]
 
-def get_category(label):
-    """
-    Maps the raw label to one of the 8 main categories.
-    Must match the logic in preprocess.py exactly.
-    """
-    # Convert to string, strip whitespace, and uppercase
+# ============================
+# LABEL MAPPING
+# ============================
+
+def map_to_multiclass(label: str) -> str:
     label = str(label).strip().upper()
-    
-    # Explicitly handle NaN or empty strings
+
     if label == 'NAN' or label == '':
         return 'DROP'
-        
+
     if 'BENIGN' in label:
         return 'Benign'
     elif 'DDOS' in label:
         return 'DDoS'
     elif 'DOS' in label:
         return 'DoS'
-    # Recon types
-    elif 'RECON' in label or 'VULNERABILITYSCAN' in label or 'PING' in label or 'PORTSCAN' in label or 'OSSCAN' in label or 'HOSTDISCOVERY' in label:
+    elif any(x in label for x in ['RECON', 'VULNERABILITYSCAN', 'PING',
+                                  'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']):
         return 'Recon'
-    # Web / Injection / Malware types (Grouping these is crucial for the 8-class logic)
-    elif 'XSS' in label or 'SQL' in label or 'UPLOAD' in label or 'BROWSER' in label or 'COMMAND' in label or 'BACKDOOR' in label or 'MALWARE' in label:
+    elif any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER',
+                                  'COMMAND', 'BACKDOOR', 'MALWARE']):
         return 'Web'
-    elif 'BRUTEFORCE' in label or 'DICTIONARY' in label:
+    elif any(x in label for x in ['BRUTEFORCE', 'DICTIONARY']):
         return 'BruteForce'
-    elif 'SPOOFING' in label or 'MITM' in label:
+    elif any(x in label for x in ['SPOOFING', 'MITM']):
         return 'Spoofing'
     elif 'MIRAI' in label:
         return 'Mirai'
     else:
         return 'Other'
 
-def create_balanced_dataset():
-    # Ensure directory exists
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    
-    if os.path.exists(OUTPUT_PATH):
-        print(f"[WARNING] Output file '{OUTPUT_PATH}' already exists. It will be overwritten.")
+# ============================
+# FEATURE CLEANING
+# ============================
 
-    # Dictionary to track how many samples we have collected for each category
-    collected_counts = {
-        'Benign': 0, 'DDoS': 0, 'DoS': 0, 'Recon': 0, 
+def clean_features_mean_impute(df, feature_cols):
+    df = df.copy()
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    means = df[feature_cols].mean()
+    df[feature_cols] = df[feature_cols].fillna(means)
+
+    return df
+
+# ============================
+# MAIN GENERATOR
+# ============================
+
+def create_dataset_with_smote():
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+
+    collected = {
+        'Benign': 0, 'DDoS': 0, 'DoS': 0, 'Recon': 0,
         'Web': 0, 'BruteForce': 0, 'Spoofing': 0, 'Mirai': 0
     }
-    
-    sampled_chunks = []
-    chunk_size = 1000000 # Read 1 million rows at a time
-    
-    print(f"[INFO] Processing {INPUT_PATH}...")
-    print(f"[GOAL] Collect max {SAMPLES_PER_CLASS} samples per category (8 Classes).")
-    print(f"[NOTE] Minority classes (Web, etc.) will be fully preserved.")
 
-    try:
-        # Iterate over the file in chunks
-        for i, chunk in enumerate(pd.read_csv(INPUT_PATH, chunksize=chunk_size)):
-            print(f"   -> Processing Chunk {i+1}...")
-            
-            # Clean column names
-            chunk.columns = chunk.columns.str.strip()
-            
-            # Find the label column
-            if 'multiclass_label' in chunk.columns:
-                label_col = 'multiclass_label'
-            elif 'label' in chunk.columns:
-                label_col = 'label'
-            else:
-                print(f"[ERROR] Label column not found in chunk {i+1}. Skipping.")
+    sampled_chunks = []
+
+    print(f"[INFO] Reading raw dataset: {INPUT_PATH}")
+
+    for i, chunk in enumerate(pd.read_csv(INPUT_PATH, chunksize=CHUNK_SIZE)):
+        print(f" → Chunk {i+1}")
+
+        chunk.columns = chunk.columns.str.strip()
+
+        label_col = (
+            'multiclass_label' if 'multiclass_label' in chunk.columns
+            else 'label' if 'label' in chunk.columns
+            else None
+        )
+        if label_col is None:
+            continue
+
+        chunk = chunk.dropna(subset=[label_col])
+
+        # Map → multiclass_label
+        chunk['multiclass_label'] = chunk[label_col].apply(map_to_multiclass)
+        chunk = chunk[~chunk['multiclass_label'].isin(['DROP', 'Other'])]
+
+        # Drop raw label column
+        if label_col != 'multiclass_label':
+            chunk.drop(columns=[label_col], inplace=True)
+
+        for cls, group in chunk.groupby('multiclass_label'):
+            cap = BENIGN_CAP if cls == 'Benign' else ATTACK_CAP
+            current = collected[cls]
+
+            if current >= cap:
                 continue
 
-            # 1. DROP NAN VALUES explicitly
-            chunk = chunk.dropna(subset=[label_col])
-            
-            # 2. MAP LABELS
-            chunk['Mapped_Label'] = chunk[label_col].apply(get_category)
-            
-            # Remove 'DROP' (NaNs) or 'Other' (Unknowns)
-            chunk = chunk[~chunk['Mapped_Label'].isin(['DROP', 'Other'])]
-            
-            # 3. SELECT SAMPLES (Sampling Logic)
-            for category, group in chunk.groupby('Mapped_Label'):
-                
-                # How many do we already have?
-                current_count = collected_counts.get(category, 0)
-                
-                # If we reached the limit (50k), skip this class
-                if current_count >= SAMPLES_PER_CLASS:
-                    continue
-                
-                # How many do we need?
-                needed = SAMPLES_PER_CLASS - current_count
-                
-                # If chunk has more than needed, sample randomly.
-                # If chunk has less than needed (Minority classes), take ALL.
-                if len(group) > needed:
-                    taken = group.sample(n=needed, random_state=42)
-                else:
-                    taken = group
-                
-                sampled_chunks.append(taken)
-                collected_counts[category] += len(taken)
-            
-            # Early Exit: If all categories reached 50k, stop reading.
-            if all(count >= SAMPLES_PER_CLASS for count in collected_counts.values()):
-                print("[SUCCESS] All categories reached the target limit! Stopping early.")
-                break
-                
-    except FileNotFoundError:
-        print(f"[ERROR] Input file not found: {INPUT_PATH}")
-        return
+            needed = cap - current
+            taken = group.sample(n=min(len(group), needed), random_state=42)
 
-    print("[INFO] Concatenating selected data...")
-    if not sampled_chunks:
-        print("[ERROR] No data collected. Check label mapping or input file.")
-        return
+            sampled_chunks.append(taken)
+            collected[cls] += len(taken)
 
-    final_df = pd.concat(sampled_chunks, ignore_index=True)
-    
-    # Shuffle the final dataset
-    final_df = final_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    
-    print("\n" + "="*40)
-    print("FINAL DATASET DISTRIBUTION (ON DISK)")
-    print("="*40)
-    print(final_df['Mapped_Label'].value_counts())
-    print("-" * 40)
-    
-    # Save to CSV
-    print(f"\n[SAVING] Writing to {OUTPUT_PATH}...")
-    final_df.to_csv(OUTPUT_PATH, index=False)
-    print("[DONE] Clean dataset is ready.")
+        if (
+            collected['Benign'] >= BENIGN_CAP and
+            all(collected[c] >= ATTACK_CAP for c in collected if c != 'Benign')
+        ):
+            print("[INFO] All caps reached, stopping early.")
+            break
+
+    print("[INFO] Concatenating capped dataset...")
+    df = pd.concat(sampled_chunks, ignore_index=True)
+    df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+
+    # ============================
+    # FEATURE CLEANING
+    # ============================
+    df = clean_features_mean_impute(df, SELECTED_FEATURES)
+
+    # Ensure Benign EXACT 1M
+    benign_df = df[df['multiclass_label'] == 'Benign']
+    if len(benign_df) < BENIGN_CAP:
+        benign_df = benign_df.sample(BENIGN_CAP, replace=True, random_state=42)
+
+    attack_df = df[df['multiclass_label'] != 'Benign']
+    df = pd.concat([benign_df, attack_df], axis=0)
+
+    print("\n[DISTRIBUTION BEFORE SMOTE]")
+    print(df['multiclass_label'].value_counts())
+
+    # ============================
+    # SMOTE (ATTACK ONLY)
+    # ============================
+    df_benign = df[df['multiclass_label'] == 'Benign']
+    df_attack = df[df['multiclass_label'] != 'Benign']
+
+    encoder = LabelEncoder()
+    y_attack = encoder.fit_transform(df_attack['multiclass_label'])
+    X_attack = df_attack[SELECTED_FEATURES].values
+
+    scaler = StandardScaler()
+    X_attack_scaled = scaler.fit_transform(X_attack)
+
+    class_counts = np.bincount(y_attack)
+    smote_strategy = {
+        cls: ATTACK_CAP
+        for cls, cnt in enumerate(class_counts)
+        if cnt < ATTACK_CAP
+    }
+
+    smote = SMOTE(
+        sampling_strategy=smote_strategy,
+        random_state=42,
+        n_jobs=-1
+    )
+
+    X_res, y_res = smote.fit_resample(X_attack_scaled, y_attack)
+    X_res = scaler.inverse_transform(X_res)
+
+    df_attack_smote = pd.DataFrame(X_res, columns=SELECTED_FEATURES)
+    df_attack_smote['multiclass_label'] = encoder.inverse_transform(y_res)
+
+    # Merge + shuffle
+    df_final = pd.concat(
+        [df_benign, df_attack_smote],
+        axis=0
+    ).sample(frac=1, random_state=42).reset_index(drop=True)
+
+    # ============================
+    # BINARY LABEL
+    # ============================
+    df_final['binary_label'] = (
+        df_final['multiclass_label'].apply(lambda x: 0 if x == 'Benign' else 1)
+    )
+
+    print("\n[DISTRIBUTION AFTER SMOTE]")
+    print(df_final['multiclass_label'].value_counts())
+    print("\n[BINARY LABEL DISTRIBUTION]")
+    print(df_final['binary_label'].value_counts())
+
+    print(f"\n[SAVING] {OUTPUT_PATH}")
+    df_final.to_csv(OUTPUT_PATH, index=False)
+    print("[DONE] Dataset ready.")
+
+# ============================
+# ENTRY POINT
+# ============================
 
 if __name__ == "__main__":
-    create_balanced_dataset()
+    create_dataset_with_smote()

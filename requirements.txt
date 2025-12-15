@@ -46,3 +46,6 @@ mypy>=0.970
 
 # (Optional) Model summary
 torchinfo>=1.8.0
+
+#SMOTE for data balancing
+imbalanced-learn

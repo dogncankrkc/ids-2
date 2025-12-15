@@ -1,28 +1,32 @@
 # ============================
-# MULTICLASS IDS CONFIG (UPDATED)
+# MULTICLASS IDS CONFIG (RESNET-1D)
 # ============================
 
 model:
   type: "ids_cnn"
-  num_classes: 8 # DDoS, DoS, Web, BruteForce, Spoofing, Mirai, Recon, Benign
-  input_channels: 1 # black-white feature maps
-  input_size: [7, 7] # updated: now we use 7x7 grid (before it was 7x10)
+  num_classes: 8
+  input_channels: 1
 
 data:
-  batch_size: 128 # 64 is a good balance between speed and memory.
-  num_workers: 2 # Dataloader processor count
+  batch_size: 128      # ResNet biraz ağırdır ama 1D olduğu için 128 kaldırır.
+  num_workers: 2
 
 training:
   epochs: 50
-  learning_rate: 0.001 # 0.0001 is better
+  learning_rate: 0.001       
   weight_decay: 0.0001
-  optimizer: "adam"
-  scheduler: "reduce_lr_on_plateau"
-  early_stopping_patience: 10
+  optimizer: "adamw"         
+  
+  # Cosine Scheduler Ayarları
+  scheduler: "cosine"
+  # T_max: Bir döngünün kaç epoch süreceği. 50 epoch ise 50 yapalım ki LR yavaşça insin.
+  # Böylece 20. epochta LR çok düşüp modeli durdurmaz.
+  
+  early_stopping_patience: 15
 
 checkpoint:
   save_dir: "models/checkpoints/ids_multiclass"
-  save_every: 5 # Save model every 5 epochs
+  save_every: 5
 
 logging:
   log_dir: "logs"

@@ -28,13 +28,13 @@ from sklearn.utils import resample
 RAW_DATA_PATH = "data/raw/CIC2023_FULL_MERGED.csv"
 
 # Path to the CLEAN filtered file (for Fig 3, 4, 5)
-PROCESSED_DATA_PATH = "data/processed/CIC2023_Balanced_50k.csv"
+PROCESSED_DATA_PATH = "data/processed/CIC2023_Balanced_SMOTE.csv"
 
 # Directory to save the plots
 SAVE_DIR = "outputs/figures"
 
 # Target samples for the final balanced plot
-TARGET_SAMPLES = 50000
+
 
 # List of features to analyze for correlations
 SELECTED_FEATURES = [
@@ -205,7 +205,7 @@ def generate_report_plots():
     
     # --- HERE IS THE RESAMPLING STEP ---
     # We apply balancing NOW to show the final distribution
-    df_balanced = balance_dataset_in_memory(df, label_col=target_col, n_samples=TARGET_SAMPLES)
+    df_balanced = df.copy()
 
     # --- FIGURE 3: Final Balanced Distribution ---
     print("[INFO] Generating Figure 3: Final Balanced Distribution (Resampled)...")
@@ -220,7 +220,7 @@ def generate_report_plots():
     plt.xlabel("Sample Count", fontsize=14)
     plt.ylabel("Attack Category", fontsize=14)
     plt.grid(axis='x', linestyle='--', alpha=0.5)
-    
+        
     for index, row in class_counts.iterrows():
         plt.text(row.Count, index, f" {row.Count}", va='center', fontsize=10, fontweight='bold')
     

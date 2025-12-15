@@ -1,0 +1,10 @@
+#best model test results after training with SMOTE balanced data
+
+accuracy: 88.37019607843138
+f1_score: 0.814048055987873
+precision: 0.845024884211393
+recall: 0.7927366666666666
+samples: 255000
+samples_per_sec: 19262.504520048882
+test_time_sec: 13.23815393447876
+time_per_sample_ms: 0.05191432915481867
