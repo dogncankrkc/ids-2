@@ -14,14 +14,13 @@ Key Features:
 """
 
 import os
-import time
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, List
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import _LRScheduler, ReduceLROnPlateau
 
 # Use metrics.py functions
 from src.training.metrics import (
@@ -40,11 +39,11 @@ class Trainer:
         criterion: nn.Module,
         optimizer: Optimizer,
         device: torch.device,
-        scheduler: Optional[_LRScheduler] = None,
+        scheduler: Optional[object] = None, # _LRScheduler or ReduceLROnPlateau 
         checkpoint_dir: str = "models/checkpoints",
     ):
         self.model = model.to(device)
-        self.criterion = criterion         # BCE or CrossEntropy
+        self.criterion = criterion         
         self.optimizer = optimizer
         self.device = device
         self.scheduler = scheduler
@@ -52,7 +51,6 @@ class Trainer:
 
         os.makedirs(checkpoint_dir, exist_ok=True)
 
-        # Training history
         self.history: Dict[str, List[float]] = {
             "train_loss": [],
             "train_acc": [],
@@ -64,14 +62,10 @@ class Trainer:
             "lr": [],
         }
 
-        # Best results tracking
         self.best_val_loss = float("inf")
         self.best_val_acc = 0.0
 
 
-    # -------------------------------------------------------
-    # One epoch of training
-    # -------------------------------------------------------
     def train_epoch(self, train_loader: DataLoader):
         self.model.train()
         running_loss, correct, total = 0.0, 0, 0
@@ -80,7 +74,7 @@ class Trainer:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
 
             self.optimizer.zero_grad()
-            outputs = self.model(inputs)     # logits
+            outputs = self.model(inputs)
             loss = self.criterion(outputs, targets)
             loss.backward()
             self.optimizer.step()
@@ -96,9 +90,6 @@ class Trainer:
         }
 
 
-    # -------------------------------------------------------
-    # Validation + Extra Metrics
-    # -------------------------------------------------------
     def validate(self, val_loader: DataLoader):
         self.model.eval()
         running_loss, preds_all, targets_all = 0.0, [], []
@@ -116,11 +107,9 @@ class Trainer:
                 preds_all.append(preds.cpu())
                 targets_all.append(targets.cpu())
 
-        # Concatenate all batches
         preds_all = torch.cat(preds_all)
         targets_all = torch.cat(targets_all)
 
-        # IDS Metrics
         val_acc = accuracy(preds_all, targets_all)
         val_prec = precision(preds_all, targets_all)
         val_rec = recall(preds_all, targets_all)
@@ -161,10 +150,21 @@ class Trainer:
                 self.history["recall"].append(val_stats["recall"])
                 self.history["f1_score"].append(val_stats["f1_score"])
 
-                # Scheduler varsa → step
+                # ----------- SCHEDULER STEP (FIXED) ----------
+                current_lr = self.optimizer.param_groups[0]['lr'] # Default LR alma yöntemi
+                
                 if self.scheduler:
-                    self.scheduler.step()
-                    self.history["lr"].append(self.scheduler.get_last_lr()[0])
+                    if isinstance(self.scheduler, ReduceLROnPlateau):
+                        # ReduceLROnPlateau metrics ister (val_loss)
+                        self.scheduler.step(val_stats["loss"])
+                    else:
+                        # Diğerleri (Cosine, StepLR) istemez
+                        self.scheduler.step()
+                        
+                    # Güncel LR'yi kaydet
+                    current_lr = self.optimizer.param_groups[0]['lr']
+
+                self.history["lr"].append(current_lr)
 
                 # ----------- PRINT RESULTS ----------
                 if verbose:
@@ -174,8 +174,7 @@ class Trainer:
                     print(f"  Precision  : {val_stats['precision']:.4f}")
                     print(f"  Recall     : {val_stats['recall']:.4f}")
                     print(f"  F1 Score   : {val_stats['f1_score']:.4f}")
-                    if self.scheduler:
-                        print(f"  LR         : {self.history['lr'][-1]:.6f}")
+                    print(f"  LR         : {current_lr:.6f}")
 
                 # ----------- EARLY STOPPING ----------
                 if val_stats["loss"] < self.best_val_loss:
@@ -184,7 +183,6 @@ class Trainer:
                     patience_counter = 0
                     best_epoch = epoch
 
-                    # SAVING BEST CHECKPOINT
                     torch.save(self.model.state_dict(), os.path.join(self.checkpoint_dir, "best_model.pth"))
 
                 else:

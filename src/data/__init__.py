@@ -9,7 +9,6 @@ This package provides:
 3. CNN-ready tensor generation (reshaped, scaled, encoded)
 """
 
-from .dataset import load_raw_csv
 from .preprocess import (
     preprocess_binary,
     preprocess_multiclass,
@@ -17,7 +16,6 @@ from .preprocess import (
 )
 
 __all__ = [
-    "load_raw_csv",
     "preprocess_binary",
     "preprocess_multiclass",
     "preprocess_single_sample",

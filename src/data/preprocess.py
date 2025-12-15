@@ -1,12 +1,17 @@
 """
-Preprocessing Utilities for IDS Data (CNN Input)
+Preprocessing Utilities for CIC-IoT-2023 Dataset (CNN Input).
 
-This module prepares the data for:
-1) Binary Classification  → uses 'binary_label'
-2) Multiclass IDS         → uses 'label2' (main attack types)
+FIXES IN THIS VERSION:
+- Added `clean_dataset` function to handle Infinity and NaN values.
+- Prevents 'ValueError: Input X contains infinity' during Scaling.
 
-The output is ready for CNN input:
-    shape → (N, 1, 7, 10)
+This module prepares the data for the model on-the-fly during training:
+1) Loading: Reads the balanced CSV.
+2) Cleaning: Removes Infinity/NaN values that break the scaler.
+3) Balancing: Upsamples minority classes (like Web) to 50k in memory.
+4) Encoding: Converts 'DDoS', 'Benign' labels to integers (0, 1, 2...).
+5) Scaling: Normalizes features to 0-1 range.
+6) Reshaping: Converts 1D data to 7x7 image format for CNN.
 """
 
 import os
@@ -16,164 +21,133 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.utils import resample
 import torch
 
 # ------------------------
-# CONFIG
+# CONFIGURATION
 # ------------------------
-FEATURE_SHAPE = (7, 10, 1)  # CNN expects → 1 x 7 x 10
+FEATURE_SHAPE = (7, 7, 1)  # Target shape for CNN input: 1 Channel, 7x7 Grid
 
-# Labels to drop (not used as features)
-DROP_COLS_COMMON = [
-    "device_name",
-    "device_mac",
-    "label_full",
-    "timestamp",
-    "timestamp_start",
-    "timestamp_end",
-]
-
-# ------------------------
-# ELLE SEÇİLMİŞ 70 FEATURE
-# (7x10 grid ile tam uyumlu)
-# ------------------------
+# List of 39 Numerical Features present in the CIC-IoT-2023 dataset
 SELECTED_FEATURES = [
-    "log_data-ranges_avg",
-    "log_data-ranges_max",
-    "log_data-ranges_min",
-    # "log_data-ranges_std_deviation"  # <- BUNU BİLEREK ÇIKARDIK
-    "log_data-types_count",
-    "log_interval-messages",
-    "log_messages_count",
-    "network_fragmentation-score",
-    "network_fragmented-packets",
-    "network_header-length_avg",
-    "network_header-length_max",
-    "network_header-length_min",
-    "network_header-length_std_deviation",
-    "network_interval-packets",
-    "network_ip-flags_avg",
-    "network_ip-flags_max",
-    "network_ip-flags_min",
-    "network_ip-flags_std_deviation",
-    "network_ip-length_avg",
-    "network_ip-length_max",
-    "network_ip-length_min",
-    "network_ip-length_std_deviation",
-    "network_ips_all_count",
-    "network_ips_dst_count",
-    "network_ips_src_count",
-    "network_macs_all_count",
-    "network_macs_dst_count",
-    "network_macs_src_count",
-    "network_mss_avg",
-    "network_mss_max",
-    "network_mss_min",
-    "network_mss_std_deviation",
-    "network_packet-size_avg",
-    "network_packet-size_max",
-    "network_packet-size_min",
-    "network_packet-size_std_deviation",
-    "network_packets_all_count",
-    "network_packets_dst_count",
-    "network_packets_src_count",
-    "network_payload-length_avg",
-    "network_payload-length_max",
-    "network_payload-length_min",
-    "network_payload-length_std_deviation",
-    "network_ports_all_count",
-    "network_ports_dst_count",
-    "network_ports_src_count",
-    "network_protocols_all_count",
-    "network_protocols_dst_count",
-    "network_protocols_src_count",
-    "network_tcp-flags-ack_count",
-    "network_tcp-flags-fin_count",
-    "network_tcp-flags-psh_count",
-    "network_tcp-flags-rst_count",
-    "network_tcp-flags-syn_count",
-    "network_tcp-flags-urg_count",
-    "network_tcp-flags_avg",
-    "network_tcp-flags_max",
-    "network_tcp-flags_min",
-    "network_tcp-flags_std_deviation",
-    "network_time-delta_avg",
-    "network_time-delta_max",
-    "network_time-delta_min",
-    "network_time-delta_std_deviation",
-    "network_ttl_avg",
-    "network_ttl_max",
-    "network_ttl_min",
-    "network_ttl_std_deviation",
-    "network_window-size_avg",
-    "network_window-size_max",
-    "network_window-size_min",
-    "network_window-size_std_deviation",
+    'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate', 
+    'fin_flag_number', 'syn_flag_number', 'rst_flag_number', 'psh_flag_number', 'ack_flag_number', 
+    'ece_flag_number', 'cwr_flag_number', 
+    'ack_count', 'syn_count', 'fin_count', 'rst_count', 
+    'HTTP', 'HTTPS', 'DNS', 'Telnet', 'SMTP', 'SSH', 'IRC', 
+    'TCP', 'UDP', 'DHCP', 'ARP', 'ICMP', 'IGMP', 'IPv', 'LLC', 
+    'Tot sum', 'Min', 'Max', 'AVG', 'Std', 'Tot size', 'IAT', 'Number', 'Variance'
 ]
-assert len(SELECTED_FEATURES) == 70, "SELECTED_FEATURES tam 70 olmalı!"
 
+# We pad the 39 features to 49 to create a perfect 7x7 grid
+TARGET_FEATURE_COUNT = 49
+SAMPLES_PER_CLASS = 50000 
 
 def _ensure_dir(path: str):
+    """Creates the directory if it does not exist."""
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
 
+def map_attack_label(label: str) -> str:
+    """
+    Fallback mapping function. 
+    Only used if 'Mapped_Label' is missing in the CSV.
+    """
+    label = str(label).strip().upper()
+    if label == 'NAN' or label == '': return 'Other'
+    if 'BENIGN' in label: return 'Benign'
+    elif 'DDOS' in label: return 'DDoS'
+    elif 'DOS' in label: return 'DoS'
+    elif 'RECON' in label or 'VULNERABILITYSCAN' in label or 'PING' in label or 'PORTSCAN' in label or 'OSSCAN' in label or 'HOSTDISCOVERY' in label: return 'Recon'
+    elif 'XSS' in label or 'SQL' in label or 'UPLOAD' in label or 'BROWSER' in label or 'COMMAND' in label or 'BACKDOOR' in label or 'MALWARE' in label: return 'Web'
+    elif 'BRUTEFORCE' in label or 'DICTIONARY' in label: return 'BruteForce'
+    elif 'SPOOFING' in label or 'MITM' in label: return 'Spoofing'
+    elif 'MIRAI' in label: return 'Mirai'
+    else: return 'Other'
+
+def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    CRITICAL FIX: Removes Infinity and NaN values.
+    
+    Why?
+    - Network features like 'Rate' can be Infinity (division by zero).
+    - MinMaxScaler throws a ValueError if it encounters Infinity.
+    
+    Steps:
+    1. Replace 'inf' and '-inf' with NaN.
+    2. Drop rows containing NaN in the selected features columns.
+    """
+    # 1. Replace Infinity with NaN
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    
+    # 2. Check for NaNs only in the features we care about
+    before = len(df)
+    df.dropna(subset=SELECTED_FEATURES, inplace=True)
+    after = len(df)
+    
+    if before != after:
+        print(f"[WARN] Dropped {before - after} rows containing Infinity or NaN values.")
+    
+    return df
+
+def balance_dataset(df: pd.DataFrame, label_col: str, n_samples: int = SAMPLES_PER_CLASS) -> pd.DataFrame:
+    """
+    Balances the dataset in RAM.
+    This ensures every class has exactly 'n_samples' (e.g., 50k).
+    """
+    print(f"[INFO] Balancing dataset to ~{n_samples} samples per class...")
+    df_balanced = pd.DataFrame()
+    unique_classes = df[label_col].unique()
+    
+    for label in unique_classes:
+        if label == 'Other': continue
+            
+        df_class = df[df[label_col] == label]
+        count = len(df_class)
+        
+        if count == 0: continue
+            
+        if count > n_samples:
+            # Undersample majority classes
+            df_resampled = resample(df_class, replace=False, n_samples=n_samples, random_state=42)
+        else:
+            # Oversample minority classes
+            df_resampled = resample(df_class, replace=True, n_samples=n_samples, random_state=42)
+        
+        df_balanced = pd.concat([df_balanced, df_resampled])
+        
+    df_balanced = df_balanced.sample(frac=1, random_state=42).reset_index(drop=True)
+    print(f"[INFO] Balanced Counts:\n{df_balanced[label_col].value_counts()}")
+    return df_balanced
+
+def pad_features(X: np.ndarray, target_count: int = TARGET_FEATURE_COUNT) -> np.ndarray:
+    """
+    Pads the feature vector with zeros to match the target count (49).
+    Required to reshape into a 7x7 grid.
+    """
+    current_count = X.shape[1]
+    if current_count < target_count:
+        padding_size = target_count - current_count
+        padding = np.zeros((X.shape[0], padding_size))
+        X_padded = np.hstack((X, padding))
+        return X_padded
+    return X
+
 def split_train_val_test(X, y, test_size=0.15, val_size=0.15):
     """
-    Veriyi 3 parçaya böler:
-    1. Önce %15 Test setini ayırır (Kenara kilitleriz).
-    2. Kalan parçadan %15 Validation ayırır.
-    3. Geriye kalan en büyük parça Train olur.
+    Splits data into Train (70%), Validation (15%), and Test (15%).
+    Uses Stratified Split to maintain class distribution.
     """
-    # 1. Adım: Test setini ayır (Stratify: Sınıf dengesini koru)
     X_temp, X_test, y_temp, y_test = train_test_split(
         X, y, test_size=test_size, random_state=42, stratify=y
     )
-    
-    # 2. Adım: Kalanı (X_temp) Train ve Validation olarak ayır
-    # val_size oranını X_temp üzerinden alırız.
-    # Örneğin X_temp %85 ise, bunun %15'i val olur.
     X_train, X_val, y_train, y_val = train_test_split(
         X_temp, y_temp, test_size=val_size, random_state=42, stratify=y_temp
     )
-    
-    # Sırayla 6 parça döndürüyoruz
     return X_train, X_val, X_test, y_train, y_val, y_test
-
-# ------------------------
-# BINARY CLASSIFICATION
-# ------------------------
-def preprocess_binary(
-    df: pd.DataFrame,
-    scaler_path: str = "models/scaler_binary.pkl",
-) -> Tuple:
-    """
-    Binary (Normal vs Attack) verisi hazırlar.
-    Dönüş: (X_train, X_val, X_test, y_train, y_val, y_test)
-    """
-    # Gereksiz sütunları at
-    df = df.drop(columns=DROP_COLS_COMMON, errors="ignore")
-
-    # Hedef ve Özellikler
-    y = df["binary_label"].values  # 0 veya 1
-    X = df[SELECTED_FEATURES].values
-
-    # Ölçeklendirme (StandardScaler)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # Scaler'ı kaydet (Inference için lazım olacak)
-    _ensure_dir(scaler_path)
-    joblib.dump(scaler, scaler_path)
-
-    # CNN için Reshape (Örn: 7x10)
-    # Boyut: (Sample_Sayısı, 7, 10, 1) -> Sondaki 1 kanal sayısı
-    X_reshaped = X_scaled.reshape(-1, FEATURE_SHAPE[0], FEATURE_SHAPE[1], FEATURE_SHAPE[2])
-
-    # 3'lü ayrıma gönder
-    return split_train_val_test(X_reshaped, y)
-
 
 # ------------------------
 # MULTICLASS CLASSIFICATION
@@ -184,65 +158,126 @@ def preprocess_multiclass(
     encoder_path: str = "models/label_encoder.pkl",
 ) -> Tuple:
     """
-    Çok sınıflı (DoS, Probe, vb.) veri hazırlar.
-    Dönüş: (X_train, X_val, X_test, y_train, y_val, y_test)
+    Main pipeline for Multiclass training.
     """
-    df = df.drop(columns=DROP_COLS_COMMON, errors="ignore")
+    print("[INFO] Starting Multiclass Preprocessing...")
 
-    # Etiketleri Sayısal Hale Getir (Label Encoding)
+    # OPTIMIZATION: Use existing 'Mapped_Label' if available
+    if 'Mapped_Label' in df.columns:
+        print("[INFO] Using existing 'Mapped_Label' column.")
+        df['target_label'] = df['Mapped_Label']
+    elif 'multiclass_label' in df.columns:
+        print("[INFO] Mapping 'multiclass_label' to categories...")
+        df['target_label'] = df['multiclass_label'].apply(map_attack_label)
+    else:
+        raise ValueError("Critical Error: No label column found (Mapped_Label or multiclass_label missing).")
+
+    # 1. Clean 'Other' classes
+    df = df[df['target_label'] != 'Other']
+    
+    # 2. CLEAN DATASET (Remove Inf/NaN) - NEW STEP
+    df = clean_dataset(df)
+
+    # 3. Balance Dataset (Web 23k -> 50k happens here)
+    df = balance_dataset(df, 'target_label', n_samples=SAMPLES_PER_CLASS)
+
+    # 4. Encode Labels (String -> Integer)
     encoder = LabelEncoder()
-    y = encoder.fit_transform(df["label2"])
-
-    # --- ÖNEMLİ: Hangi sayı hangi atağa denk geliyor görelim ---
+    y = encoder.fit_transform(df['target_label'])
+    
     mapping = dict(zip(encoder.classes_, encoder.transform(encoder.classes_)))
-    print(f"\n[INFO] Multiclass Label Mapping: {mapping}")
-    # -----------------------------------------------------------
-
-    # Encoder'ı kaydet (Inference'da tersine çevirmek için)
+    print(f"[INFO] Class Mapping: {mapping}")
     _ensure_dir(encoder_path)
     joblib.dump(encoder, encoder_path)
 
-    # Özellikleri seç ve ölçeklendir
+    # 5. Extract, Pad, Scale Features
     X = df[SELECTED_FEATURES].values
-    scaler = StandardScaler()
+    X = pad_features(X, TARGET_FEATURE_COUNT)
+
+    scaler = MinMaxScaler()
+    # Now X is clean, so fit_transform will not crash
+    X_scaled = scaler.fit_transform(X)
+    _ensure_dir(scaler_path)
+    joblib.dump(scaler, scaler_path)
+
+    # 6. Reshape for CNN (N, 1, 7, 7)
+    X_reshaped = X_scaled.reshape(-1, FEATURE_SHAPE[0], FEATURE_SHAPE[1], FEATURE_SHAPE[2])
+
+    print(f"[INFO] Final Data Shape: {X_reshaped.shape}")
+    return split_train_val_test(X_reshaped, y)
+
+# ------------------------
+# BINARY CLASSIFICATION
+# ------------------------
+def preprocess_binary(
+    df: pd.DataFrame,
+    scaler_path: str = "models/scaler_binary.pkl",
+) -> Tuple:
+    """
+    Main pipeline for Binary training (Benign vs Attack).
+    """
+    print("[INFO] Starting Binary Preprocessing...")
+    
+    # Use binary_label if exists, else derive it
+    if 'binary_label' in df.columns:
+        df['label_bin'] = df['binary_label']
+    else:
+        # Fallback
+        target_col = 'Mapped_Label' if 'Mapped_Label' in df.columns else 'multiclass_label'
+        df['label_bin'] = df[target_col].apply(lambda x: 0 if 'Benign' in str(x) else 1)
+
+    # 1. CLEAN DATASET (Remove Inf/NaN) - NEW STEP
+    df = clean_dataset(df)
+
+    # 2. Balance Dataset
+    df = balance_dataset(df, 'label_bin', n_samples=SAMPLES_PER_CLASS)
+    y = df['label_bin'].values
+    
+    # 3. Extract & Pad
+    X = df[SELECTED_FEATURES].values
+    X = pad_features(X, TARGET_FEATURE_COUNT)
+
+    # 4. Scale
+    scaler = MinMaxScaler()
     X_scaled = scaler.fit_transform(X)
 
     _ensure_dir(scaler_path)
     joblib.dump(scaler, scaler_path)
 
-    # CNN için Reshape
+    # 5. Reshape
     X_reshaped = X_scaled.reshape(-1, FEATURE_SHAPE[0], FEATURE_SHAPE[1], FEATURE_SHAPE[2])
-
-    # 3'lü ayrıma gönder
     return split_train_val_test(X_reshaped, y)
 
-# ------------------------
-# SINGLE SAMPLE PREPROCESSING (INFERENCE)
-# ------------------------
 def preprocess_single_sample(df_row: pd.DataFrame) -> torch.Tensor:
     """
-    Canlı sistemde tek bir satır veri geldiğinde kullanılır.
-    Çıktı: (1, 1, 7, 10) boyutunda Tensor.
+    Prepares a single row for inference (Prediction).
+    Also handles NaN/Inf for safety.
     """
-    # Tek satır mı, seri mi kontrol et
-    if isinstance(df_row, pd.DataFrame):
-        row = df_row[SELECTED_FEATURES].values
-    else:
-        row = df_row[SELECTED_FEATURES].to_frame().T.values
+    if isinstance(df_row, pd.Series):
+        df_row = df_row.to_frame().T
+        
+    for col in SELECTED_FEATURES:
+        if col not in df_row.columns:
+            df_row[col] = 0.0     
+            
+    # Clean possible Inf in single sample
+    df_row.replace([np.inf, -np.inf], 0, inplace=True)
+    df_row.fillna(0, inplace=True)
 
-    # Kaydedilmiş Scaler'ı yükle (Test verisini EĞİTİM scaler'ı ile dönüştürmeliyiz)
-    # Not: Binary mi Multiclass mı kullandığına göre buradaki path değişebilir.
-    # Varsayılan olarak multiclass scaler yüklüyoruz.
+    row_values = df_row[SELECTED_FEATURES].values
+    
+    # Pad
+    if row_values.shape[1] < TARGET_FEATURE_COUNT:
+        padding = np.zeros((row_values.shape[0], TARGET_FEATURE_COUNT - row_values.shape[1]))
+        row_values = np.hstack((row_values, padding))
+        
+    # Scale
     try:
         scaler = joblib.load("models/scaler_multi.pkl")
     except FileNotFoundError:
-        # Eğer henüz multi yoksa binary dene
         scaler = joblib.load("models/scaler_binary.pkl")
         
-    x_scaled = scaler.transform(row)
-
-    # Reshape: (1 örnek, 1 kanal, 7 yükseklik, 10 genişlik)
-    # PyTorch formatına uygun hale getirdik.
-    x_reshaped = x_scaled.reshape(1, 1, 7, 10)
+    x_scaled = scaler.transform(row_values)
+    x_reshaped = x_scaled.reshape(1, 1, 7, 7)
     
     return torch.tensor(x_reshaped, dtype=torch.float32)
