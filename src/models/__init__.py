@@ -6,9 +6,9 @@ Exports:
     - create_ids_model: Factory function to instantiate models easily
 """
 
-from .cnn_model import IDS_CNN, create_ids_model
+from .cnn_model import IDS_CNN2D, create_ids_model
 
 __all__ = [
-    "IDS_CNN",
+    "IDS_CNN2D",
     "create_ids_model",
 ]

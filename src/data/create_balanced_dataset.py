@@ -1,40 +1,37 @@
 """
-Dataset Generator Script for CIC-IoT-2023 (CAPPED + SMOTE).
+FINAL DATASET CREATOR – CIC-IoT-2023 (CAPPED, NO LEAKAGE)
 
-Pipeline:
-1. Read massive raw CSV in chunks (RAM-safe)
-2. Map raw labels → 8 attack categories
-3. Drop raw label columns
-4. Cap dataset:
-   - Benign: EXACT 1,000,000
-   - Each attack class: max 100,000
-5. Clean features:
-   - Inf  -> removed
-   - NaN  -> filled with feature mean (GLOBAL)
-6. Apply SMOTE ONLY on attack classes that have < 100k samples
-7. Create:
-   - multiclass_label (8-class)
-   - binary_label (Benign=0, Attack=1)
-8. Save final dataset
+OUTPUT:
+- data/processed/CIC2023_CAPPED.csv
+
+IMPORTANT:
+- NO SMOTE
+- NO SCALER
+- NO ENCODER
+- NO TRAIN/VAL/TEST SPLIT
+
+This file ONLY:
+✓ maps raw labels → 8-class multiclass
+✓ caps samples safely
+✓ cleans NaN / Inf
+✓ adds PAD feature
 """
 
 import os
 import numpy as np
 import pandas as pd
 
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from imblearn.over_sampling import SMOTE
-
-# ============================
-# CONFIGURATION
-# ============================
+# ============================================================
+# CONFIG
+# ============================================================
 
 INPUT_PATH = "data/raw/CIC2023_FULL_MERGED.csv"
-OUTPUT_PATH = "data/processed/CIC2023_CAPPED_SMOTE.csv"
+OUTPUT_PATH = "data/processed/CIC2023_CAPPED.csv"
 
+CHUNK_SIZE = 1_000_000
 BENIGN_CAP = 1_000_000
 ATTACK_CAP = 100_000
-CHUNK_SIZE = 1_000_000
+PAD_FEATURE_NAME = "PAD_0"
 
 SELECTED_FEATURES = [
     'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate',
@@ -44,189 +41,150 @@ SELECTED_FEATURES = [
     'rst_count', 'HTTP', 'HTTPS', 'DNS', 'Telnet', 'SMTP', 'SSH',
     'IRC', 'TCP', 'UDP', 'DHCP', 'ARP', 'ICMP', 'IGMP', 'IPv',
     'LLC', 'Tot sum', 'Min', 'Max', 'AVG', 'Std', 'Tot size',
-    'IAT', 'Number', 'Variance'
+    'IAT', 'Number', 'Variance',
+    PAD_FEATURE_NAME
 ]
 
-# ============================
+TARGET_CLASSES = [
+    "Benign", "DDoS", "DoS", "Recon",
+    "Web", "BruteForce", "Spoofing", "Mirai"
+]
+
+# ============================================================
 # LABEL MAPPING
-# ============================
+# ============================================================
 
 def map_to_multiclass(label: str) -> str:
     label = str(label).strip().upper()
 
     if label == 'NAN' or label == '':
-        return 'DROP'
+        return 'Other'
 
     if 'BENIGN' in label:
         return 'Benign'
+
     elif 'DDOS' in label:
         return 'DDoS'
+
     elif 'DOS' in label:
         return 'DoS'
-    elif any(x in label for x in ['RECON', 'VULNERABILITYSCAN', 'PING',
-                                  'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']):
+
+    elif (
+        'RECON' in label or
+        'VULNERABILITYSCAN' in label or
+        'PING' in label or
+        'PORTSCAN' in label or
+        'OSSCAN' in label or
+        'HOSTDISCOVERY' in label
+    ):
         return 'Recon'
-    elif any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER',
-                                  'COMMAND', 'BACKDOOR', 'MALWARE']):
+
+    elif (
+        'XSS' in label or
+        'SQL' in label or
+        'UPLOAD' in label or
+        'BROWSER' in label or
+        'COMMAND' in label or
+        'BACKDOOR' in label or
+        'MALWARE' in label
+    ):
         return 'Web'
-    elif any(x in label for x in ['BRUTEFORCE', 'DICTIONARY']):
+
+    elif 'BRUTEFORCE' in label or 'DICTIONARY' in label:
         return 'BruteForce'
-    elif any(x in label for x in ['SPOOFING', 'MITM']):
+
+    elif 'SPOOFING' in label or 'MITM' in label:
         return 'Spoofing'
+
     elif 'MIRAI' in label:
         return 'Mirai'
+
     else:
         return 'Other'
 
-# ============================
-# FEATURE CLEANING
-# ============================
 
-def clean_features_mean_impute(df, feature_cols):
-    df = df.copy()
-    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+# ============================================================
+# MAIN
+# ============================================================
 
-    means = df[feature_cols].mean()
-    df[feature_cols] = df[feature_cols].fillna(means)
-
-    return df
-
-# ============================
-# MAIN GENERATOR
-# ============================
-
-def create_dataset_with_smote():
+def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
-    collected = {
-        'Benign': 0, 'DDoS': 0, 'DoS': 0, 'Recon': 0,
-        'Web': 0, 'BruteForce': 0, 'Spoofing': 0, 'Mirai': 0
-    }
+    collected = {cls: 0 for cls in TARGET_CLASSES}
+    chunks = []
 
-    sampled_chunks = []
-
-    print(f"[INFO] Reading raw dataset: {INPUT_PATH}")
+    print("[INFO] Starting capped dataset creation")
 
     for i, chunk in enumerate(pd.read_csv(INPUT_PATH, chunksize=CHUNK_SIZE)):
-        print(f" → Chunk {i+1}")
+        print(f"[INFO] Processing chunk {i+1}")
 
-        chunk.columns = chunk.columns.str.strip()
+        # -----------------------------------------
+        # LABEL SOURCE (CRITICAL FIX)
+        # -----------------------------------------
+        if "multiclass_label" in chunk.columns:
+            raw_labels = chunk["multiclass_label"]
+        elif "label" in chunk.columns:
+            raw_labels = chunk["label"]
+        else:
+            raise ValueError("No label column found in dataset")
 
-        label_col = (
-            'multiclass_label' if 'multiclass_label' in chunk.columns
-            else 'label' if 'label' in chunk.columns
-            else None
-        )
-        if label_col is None:
-            continue
+        # 1️⃣ Label mapping
+        chunk["multiclass_label"] = raw_labels.apply(map_to_multiclass)
 
-        chunk = chunk.dropna(subset=[label_col])
+        # 2️⃣ DROP Other (KRİTİK SATIR)
+        chunk = chunk[chunk["multiclass_label"] != "Other"]
 
-        # Map → multiclass_label
-        chunk['multiclass_label'] = chunk[label_col].apply(map_to_multiclass)
-        chunk = chunk[~chunk['multiclass_label'].isin(['DROP', 'Other'])]
+        # -----------------------------------------
+        # FEATURE CLEANING
+        # -----------------------------------------
+        chunk[PAD_FEATURE_NAME] = 0.0
+        chunk.replace([np.inf, -np.inf], np.nan, inplace=True)
+        chunk.dropna(subset=SELECTED_FEATURES, inplace=True)
 
-        # Drop raw label column
-        if label_col != 'multiclass_label':
-            chunk.drop(columns=[label_col], inplace=True)
+        # -----------------------------------------
+        # CLASS CAPPING
+        # -----------------------------------------
+        for cls, group in chunk.groupby("multiclass_label"):
+            cap = BENIGN_CAP if cls == "Benign" else ATTACK_CAP
+            remaining = cap - collected[cls]
 
-        for cls, group in chunk.groupby('multiclass_label'):
-            cap = BENIGN_CAP if cls == 'Benign' else ATTACK_CAP
-            current = collected[cls]
-
-            if current >= cap:
+            if remaining <= 0:
                 continue
 
-            needed = cap - current
-            taken = group.sample(n=min(len(group), needed), random_state=42)
+            take = group.sample(
+                n=min(len(group), remaining),
+                random_state=42
+            )
 
-            sampled_chunks.append(taken)
-            collected[cls] += len(taken)
+            collected[cls] += len(take)
+            chunks.append(take)
 
-        if (
-            collected['Benign'] >= BENIGN_CAP and
-            all(collected[c] >= ATTACK_CAP for c in collected if c != 'Benign')
+        # -----------------------------------------
+        # EARLY STOP
+        # -----------------------------------------
+        if all(
+            collected[c] >= (BENIGN_CAP if c == "Benign" else ATTACK_CAP)
+            for c in collected
         ):
-            print("[INFO] All caps reached, stopping early.")
+            print("[INFO] All caps reached. Stopping early.")
             break
 
-    print("[INFO] Concatenating capped dataset...")
-    df = pd.concat(sampled_chunks, ignore_index=True)
+    # -----------------------------------------
+    # FINAL DATASET
+    # -----------------------------------------
+    df = pd.concat(chunks, ignore_index=True)
     df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    # ============================
-    # FEATURE CLEANING
-    # ============================
-    df = clean_features_mean_impute(df, SELECTED_FEATURES)
+    df["binary_label"] = (df["multiclass_label"] != "Benign").astype(int)
 
-    # Ensure Benign EXACT 1M
-    benign_df = df[df['multiclass_label'] == 'Benign']
-    if len(benign_df) < BENIGN_CAP:
-        benign_df = benign_df.sample(BENIGN_CAP, replace=True, random_state=42)
+    df.to_csv(OUTPUT_PATH, index=False)
 
-    attack_df = df[df['multiclass_label'] != 'Benign']
-    df = pd.concat([benign_df, attack_df], axis=0)
+    print("\n✅ CAPPED DATASET SAVED:", OUTPUT_PATH)
+    print("\n[FINAL DISTRIBUTION]")
+    print(df["multiclass_label"].value_counts())
+    print("\n[BINARY DISTRIBUTION]")
+    print(df["binary_label"].value_counts())
 
-    print("\n[DISTRIBUTION BEFORE SMOTE]")
-    print(df['multiclass_label'].value_counts())
-
-    # ============================
-    # SMOTE (ATTACK ONLY)
-    # ============================
-    df_benign = df[df['multiclass_label'] == 'Benign']
-    df_attack = df[df['multiclass_label'] != 'Benign']
-
-    encoder = LabelEncoder()
-    y_attack = encoder.fit_transform(df_attack['multiclass_label'])
-    X_attack = df_attack[SELECTED_FEATURES].values
-
-    scaler = StandardScaler()
-    X_attack_scaled = scaler.fit_transform(X_attack)
-
-    class_counts = np.bincount(y_attack)
-    smote_strategy = {
-        cls: ATTACK_CAP
-        for cls, cnt in enumerate(class_counts)
-        if cnt < ATTACK_CAP
-    }
-
-    smote = SMOTE(
-        sampling_strategy=smote_strategy,
-        random_state=42,
-        n_jobs=-1
-    )
-
-    X_res, y_res = smote.fit_resample(X_attack_scaled, y_attack)
-    X_res = scaler.inverse_transform(X_res)
-
-    df_attack_smote = pd.DataFrame(X_res, columns=SELECTED_FEATURES)
-    df_attack_smote['multiclass_label'] = encoder.inverse_transform(y_res)
-
-    # Merge + shuffle
-    df_final = pd.concat(
-        [df_benign, df_attack_smote],
-        axis=0
-    ).sample(frac=1, random_state=42).reset_index(drop=True)
-
-    # ============================
-    # BINARY LABEL
-    # ============================
-    df_final['binary_label'] = (
-        df_final['multiclass_label'].apply(lambda x: 0 if x == 'Benign' else 1)
-    )
-
-    print("\n[DISTRIBUTION AFTER SMOTE]")
-    print(df_final['multiclass_label'].value_counts())
-    print("\n[BINARY LABEL DISTRIBUTION]")
-    print(df_final['binary_label'].value_counts())
-
-    print(f"\n[SAVING] {OUTPUT_PATH}")
-    df_final.to_csv(OUTPUT_PATH, index=False)
-    print("[DONE] Dataset ready.")
-
-# ============================
-# ENTRY POINT
-# ============================
 
 if __name__ == "__main__":
-    create_dataset_with_smote()
+    main()

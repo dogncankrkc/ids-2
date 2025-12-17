@@ -63,40 +63,49 @@ def plot_confusion_matrix(
     save_path: Optional[str] = None,
     figsize: Tuple[int, int] = (8, 6),
     cmap: str = "Blues",
-    normalize: bool = False,  
+    normalize: bool = False,
+    show_percent: bool = False,
 ) -> None:
     """
-    Confusion matrix çizer. 
-    normalize=True yapılırsa değerleri 0-1 arasına (yüzdelik) oranlar.
+    Plots a confusion matrix.
+
+    Args:
+        cm (np.ndarray): Confusion matrix (NxN).
+        class_names (List[str], optional): Class labels.
+        save_path (str, optional): Path to save the figure.
+        figsize (Tuple[int, int]): Figure size.
+        cmap (str): Matplotlib colormap.
+        normalize (bool): If True, row-normalize values.
+        show_percent (bool): If True and normalize=True, show percentages (0–100).
     """
-    num_classes = len(cm)
+
+    num_classes = cm.shape[0]
 
     if class_names is None:
         class_names = [str(i) for i in range(num_classes)]
 
-    # --- normalization logic  ---
+    # ---------------- Normalization ----------------
     if normalize:
-        cm_float = cm.astype('float') / (cm.sum(axis=1)[:, np.newaxis] + 1e-9)
+        cm_float = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-9)
         title = "Normalized Confusion Matrix"
-        fmt = ".2f"  # 0.95 format
+        fmt = ".1f" if show_percent else ".2f"
+        if show_percent:
+            cm_float = cm_float * 100.0
     else:
         cm_float = cm
         title = "Confusion Matrix"
-        fmt = "d"    # Integer format
-    # ------------------------------------
+        fmt = "d"
+    # ------------------------------------------------
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Plot the heatmap
     im = ax.imshow(cm_float, interpolation="nearest", cmap=cmap)
-    
-    # If normalized, fix color scale between 0 and 1
+
     if normalize:
-        im.set_clim(0., 1.)
-        
+        im.set_clim(0., 100. if show_percent else 1.)
+
     ax.figure.colorbar(im, ax=ax)
 
-    # Axis labels
     ax.set(
         xticks=np.arange(num_classes),
         yticks=np.arange(num_classes),
@@ -107,10 +116,8 @@ def plot_confusion_matrix(
         title=title,
     )
 
-    # Rotate the tick labels
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
-    # Write values inside the boxes
     thresh = cm_float.max() / 2.0
     for i in range(num_classes):
         for j in range(num_classes):
@@ -125,7 +132,10 @@ def plot_confusion_matrix(
 
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Saved plot to {save_path}")
+        print(f"[INFO] Confusion matrix saved to: {save_path}")
+
+    plt.close(fig)
+
 
 def plot_learning_rate(
     history: Dict[str, List[float]],

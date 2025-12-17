@@ -1,86 +1,105 @@
 """
-ResNet-1D Architecture for IDS
-Optimized for Tabular Data: Uses Residual Connections + Wide Kernels to capture feature interactions.
+CNN-2D Architecture for IDS (Tabular → Spatial Mapping)
+
+Input:
+    - Shape: (N, 1, 5, 8)
+    - 40 features mapped to a 2D grid
+
+Design Goals:
+✓ Lightweight (Edge-friendly, Raspberry Pi 4B)
+✓ Stable training (BatchNorm + Dropout)
+✓ CNN2D-aware (Preserves spatial correlations)
+✓ Binary & Multiclass support
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+
+# =====================================================
+# BASIC CONV BLOCK
+# =====================================================
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1):
         super().__init__()
-        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
-        self.bn1 = nn.BatchNorm1d(out_channels)
-        self.relu = nn.LeakyReLU(0.1) 
-        
-        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size, 1, padding, bias=False)
-        self.bn2 = nn.BatchNorm1d(out_channels)
-        
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv1d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm1d(out_channels)
-            )
+        self.conv = nn.Conv2d(
+            in_channels, out_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            bias=False
+        )
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.act = nn.LeakyReLU(0.1)
 
     def forward(self, x):
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out += self.shortcut(x) # Skip Connection 
-        out = self.relu(out)
-        return out
+        return self.act(self.bn(self.conv(x)))
 
-class IDS_CNN(nn.Module):
-    def __init__(self, num_classes=8):
+
+# =====================================================
+# CNN2D MODEL
+# =====================================================
+class IDS_CNN2D(nn.Module):
+    def __init__(self, num_classes: int = 8):
         super().__init__()
 
-        self.conv1 = nn.Conv1d(1, 64, kernel_size=7, stride=1, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.relu = nn.LeakyReLU(0.1)
+        # -----------------------------
+        # Feature extractor
+        # -----------------------------
+        self.features = nn.Sequential(
+            ConvBlock(1, 16),      # (N, 16, 5, 8)
+            ConvBlock(16, 32),     # (N, 32, 5, 8)
+            nn.MaxPool2d(2),       # (N, 32, 2, 4)
 
-        self.layer1 = self._make_layer(64, 64,  blocks=2, kernel_size=5, padding=2)
-        self.layer2 = self._make_layer(64, 128, blocks=2, kernel_size=3, padding=1, stride=2)
-        self.layer3 = self._make_layer(128, 256, blocks=2, kernel_size=3, padding=1, stride=2)
+            ConvBlock(32, 64),     # (N, 64, 2, 4)
+            nn.MaxPool2d(2),       # (N, 64, 1, 2)
 
-        self.global_pool = nn.AdaptiveAvgPool1d(1) 
-        self.dropout = nn.Dropout(0.5)
-        self.fc = nn.Linear(256, num_classes)
-        
+            ConvBlock(64, 128),    # (N, 128, 1, 2)
+        )
+
+        # -----------------------------
+        # Global pooling + classifier
+        # -----------------------------
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))  # (N, 128, 1, 1)
+        self.dropout = nn.Dropout(p=0.3)
+        self.fc = nn.Linear(128, num_classes)
+
         self.num_classes = num_classes
 
-    def _make_layer(self, in_channels, out_channels, blocks, kernel_size, padding, stride=1):
-        layers = []
-        layers.append(ResidualBlock(in_channels, out_channels, kernel_size, stride, padding))
-        for _ in range(1, blocks):
-            layers.append(ResidualBlock(out_channels, out_channels, kernel_size, 1, padding))
-        return nn.Sequential(*layers)
-
     def forward(self, x):
-        if x.dim() == 2: x = x.unsqueeze(1)
-        elif x.dim() == 4: x = x.view(x.size(0), 1, -1)
+        """
+        Expected input:
+            x -> (N, 1, 5, 8)
+        """
+        if x.dim() != 4:
+            raise ValueError(
+                f"Expected 4D input (N, 1, 5, 8), got {x.shape}"
+            )
 
-        x = self.relu(self.bn1(self.conv1(x)))
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-
+        x = self.features(x)
         x = self.global_pool(x)
-        x = x.view(x.size(0), -1) 
-        
+        x = x.view(x.size(0), -1)  # (N, 128)
         x = self.dropout(x)
         x = self.fc(x)
         return x
-    
+
     def count_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
-def create_ids_model(mode="binary", num_classes=None):
+
+# =====================================================
+# MODEL FACTORY
+# =====================================================
+def create_ids_model(mode: str = "binary", num_classes: int = None):
+    """
+    Factory function used by train.py
+    """
     if mode == "binary":
-        return IDS_CNN(num_classes=2)
+        return IDS_CNN2D(num_classes=2)
+
     elif mode == "multiclass":
-        assert num_classes is not None, "num_classes required"
-        return IDS_CNN(num_classes=num_classes)
+        assert num_classes is not None, "num_classes must be provided"
+        return IDS_CNN2D(num_classes=num_classes)
+
     else:
-        raise ValueError("Invalid mode")
+        raise ValueError("Invalid mode (binary | multiclass)")
