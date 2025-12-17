@@ -1,35 +1,48 @@
-# ============================
-# MULTICLASS IDS CONFIG (RESNET-1D)
-# ============================
+# ============================================================
+# MULTICLASS IDS CONFIGURATION (RESNET-1D)
+# ============================================================
 
 model:
-  type: "ids_cnn"
-  num_classes: 8
-  input_channels: 1
+  type: "ids_cnn" # Model architecture type
+  num_classes: 8 # Number of output classes (7 attack types + 1 benign)
+  input_channels: 1 # Number of input channels (1 for 1D data)
 
 data:
-  batch_size: 128      # ResNet biraz ağırdır ama 1D olduğu için 128 kaldırır.
-  num_workers: 2
+  # Larger batches help reduce noise in gradient estimation.
+  batch_size: 256
+
+  # Number of subprocesses for data loading.
+  # Set to 2 or 4 for macOS (MPS).
+  num_workers: 0
 
 training:
-  epochs: 50
-  learning_rate: 0.001       
-  weight_decay: 0.0001
-  optimizer: "adamw"         
-  
-  # Cosine Scheduler Ayarları
-  scheduler: "cosine"
-  # T_max: Bir döngünün kaç epoch süreceği. 50 epoch ise 50 yapalım ki LR yavaşça insin.
-  # Böylece 20. epochta LR çok düşüp modeli durdurmaz.
-  
-  early_stopping_patience: 15
+  epochs: 50 # Maximum number of training cycles
+
+  # Reduced learning rate for stable convergence.
+  # Prevents the model from overshooting minima during optimization.
+  learning_rate: 0.0003
+
+  # Helps prevent overfitting by penalizing large weights. Standard for AdamW.
+  weight_decay: 0.01
+
+  # This algorithm updates the parameters (weights and biases) of a neural network to minimize its loss function.
+  optimizer: "adamw" # AdamW is generally better than Adam for weight decay handling
+
+  # Reduces LR when the validation loss stops improving.
+  scheduler: "plateau"
+
+  # Stop training if validation loss doesn't improve for 10 consecutive epochs.
+  early_stopping_patience: 10
 
 checkpoint:
-  save_dir: "models/checkpoints/ids_multiclass"
+  # Directory where model weights (.pth) will be saved
+  save_dir: "models/checkpoints/ids_multiclass_stable"
+
+  # Frequency of saving model checkpoints (in epochs)
   save_every: 5
 
 logging:
-  log_dir: "logs"
-  verbose: true
+  log_dir: "logs" # Directory for training logs (TensorBoard/CSV)
+  verbose: true # Print detailed progress to the console
 
-seed: 42
+seed: 42 # Random seed for reproducibility

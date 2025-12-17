@@ -12,12 +12,11 @@ class ResidualBlock(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
         self.bn1 = nn.BatchNorm1d(out_channels)
-        self.relu = nn.LeakyReLU(0.1) # ReLU yerine LeakyReLU (Ölü nöronları engeller)
+        self.relu = nn.LeakyReLU(0.1) 
         
         self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size, 1, padding, bias=False)
         self.bn2 = nn.BatchNorm1d(out_channels)
         
-        # Eğer giriş ve çıkış boyutları uyuşmazsa, boyutu eşitlemek için 1x1 Conv kullan
         self.shortcut = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential(
@@ -28,7 +27,7 @@ class ResidualBlock(nn.Module):
     def forward(self, x):
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
-        out += self.shortcut(x) # Skip Connection (İşte sırrı burada)
+        out += self.shortcut(x) # Skip Connection 
         out = self.relu(out)
         return out
 
@@ -36,20 +35,15 @@ class IDS_CNN(nn.Module):
     def __init__(self, num_classes=8):
         super().__init__()
 
-        # --- GİRİŞ KATMANI (GENİŞ GÖRÜŞ AÇISI) ---
-        # Kernel Size 7: Model aynı anda 7 sütuna birden bakar (İlişkileri yakalar)
         self.conv1 = nn.Conv1d(1, 64, kernel_size=7, stride=1, padding=3, bias=False)
         self.bn1 = nn.BatchNorm1d(64)
         self.relu = nn.LeakyReLU(0.1)
 
-        # --- RESIDUAL BLOKLAR ---
-        # Model derinleşiyor ama Residual yapı sayesinde bilgi kaybolmuyor.
         self.layer1 = self._make_layer(64, 64,  blocks=2, kernel_size=5, padding=2)
         self.layer2 = self._make_layer(64, 128, blocks=2, kernel_size=3, padding=1, stride=2)
         self.layer3 = self._make_layer(128, 256, blocks=2, kernel_size=3, padding=1, stride=2)
 
-        # --- ÇIKIŞ KATMANI ---
-        self.global_pool = nn.AdaptiveAvgPool1d(1) # Ne gelirse gelsin (N, 256, 1) yapar
+        self.global_pool = nn.AdaptiveAvgPool1d(1) 
         self.dropout = nn.Dropout(0.5)
         self.fc = nn.Linear(256, num_classes)
         
@@ -57,15 +51,12 @@ class IDS_CNN(nn.Module):
 
     def _make_layer(self, in_channels, out_channels, blocks, kernel_size, padding, stride=1):
         layers = []
-        # İlk blok (Boyut değişimi olabilir)
         layers.append(ResidualBlock(in_channels, out_channels, kernel_size, stride, padding))
-        # Geri kalan bloklar
         for _ in range(1, blocks):
             layers.append(ResidualBlock(out_channels, out_channels, kernel_size, 1, padding))
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # 2D veya 4D gelirse 1D'ye çevir
         if x.dim() == 2: x = x.unsqueeze(1)
         elif x.dim() == 4: x = x.view(x.size(0), 1, -1)
 
@@ -76,7 +67,7 @@ class IDS_CNN(nn.Module):
         x = self.layer3(x)
 
         x = self.global_pool(x)
-        x = x.view(x.size(0), -1) # Flatten
+        x = x.view(x.size(0), -1) 
         
         x = self.dropout(x)
         x = self.fc(x)

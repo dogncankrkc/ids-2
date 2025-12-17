@@ -54,10 +54,8 @@ logs/*
 # Project data folders (keep gitkeep)
 data/raw/*
 data/processed/*
-data/external/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-!data/external/.gitkeep
 
 # Models (keep structure)
 models/checkpoints/*

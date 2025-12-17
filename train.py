@@ -27,7 +27,8 @@ def load_config(config_path: str):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
-def create_ids_loaders(mode: str, batch_size: int):
+# GÜNCELLEME: num_workers parametresi eklendi
+def create_ids_loaders(mode: str, batch_size: int, num_workers: int = 0):
     print(f"[INFO] Loading dataset from: {PROCESSED_DATA_PATH}")
     
     try:
@@ -62,6 +63,7 @@ def create_ids_loaders(mode: str, batch_size: int):
     y_test_t  = torch.tensor(y_test, dtype=torch.long)
 
     # 4. DataLoaders
+    # GÜNCELLEME: num_workers parametresi DataLoader'lara eklendi
     train_dataset = TensorDataset(X_train_t, y_train_t)
     val_dataset   = TensorDataset(X_val_t,   y_val_t)
     test_dataset  = TensorDataset(X_test_t,  y_test_t)
@@ -70,9 +72,9 @@ def create_ids_loaders(mode: str, batch_size: int):
     print(f"[INFO] Val Samples:   {len(val_dataset)}")
     
     return {
-        "train": DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
-        "val":   DataLoader(val_dataset,   batch_size=batch_size, shuffle=False),
-        "test":  DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
+        "train": DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers),
+        "val":   DataLoader(val_dataset,   batch_size=batch_size, shuffle=False, num_workers=num_workers),
+        "test":  DataLoader(test_dataset,  batch_size=batch_size, shuffle=False, num_workers=num_workers)
     }
 
 def main():
@@ -90,7 +92,15 @@ def main():
     device = get_device()
     print(f"Using device: {device}")
 
-    loaders = create_ids_loaders(mode=args.mode, batch_size=config["data"]["batch_size"])
+    # GÜNCELLEME: Config'den num_workers değerini al (varsayılan 0)
+    num_workers = config["data"].get("num_workers", 0)
+    print(f"[INFO] DataLoader num_workers: {num_workers}")
+
+    loaders = create_ids_loaders(
+        mode=args.mode, 
+        batch_size=config["data"]["batch_size"],
+        num_workers=num_workers
+    )
 
     if args.mode == "binary":
         num_classes = 2
@@ -116,6 +126,7 @@ def main():
         optimizer=optimizer,
         scheduler_name=config["training"]["scheduler"],
         epochs=config["training"]["epochs"], 
+        patience=config["training"].get("early_stopping_patience", 10) # Örnek kullanım
     )
 
     trainer = Trainer(
@@ -159,7 +170,6 @@ def main():
 
     print("[INFO] Best model loaded successfully.")
 
-
     print("\n" + "=" * 30)
     print("RUNNING FINAL TEST EVALUATION")
     print("=" * 30)
@@ -175,8 +185,6 @@ def main():
         yaml.safe_dump(test_results, f)
 
     print(f"[INFO] Test metrics saved to: {test_metrics_path}")
-
-
 
     final_path = os.path.join(config["checkpoint"]["save_dir"], f"final_model_{args.mode}.pth")
     torch.save({

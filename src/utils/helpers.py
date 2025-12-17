@@ -152,8 +152,8 @@ def get_scheduler(
         "cosine": lambda: torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=epochs
         ),
-        "reduce_lr_on_plateau": lambda: torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="max", factor=factor, patience=patience
+       "reduce_lr_on_plateau": lambda: torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=factor, patience=patience
         ),
         "plateau": lambda: torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="max", factor=factor, patience=patience
