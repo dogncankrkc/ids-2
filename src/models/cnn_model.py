@@ -38,30 +38,29 @@ class ResidualBlock(nn.Module):
         out += residual
         out = self.relu(out)
         return out
+# Mevcut importlar ve ResidualBlock sınıfı AYNI KALSIN.
+# Sadece ResNet1D sınıfını şu şekilde güncelle:
 
 class ResNet1D(nn.Module):
     def __init__(self, num_classes=8, input_dim=39):
         super(ResNet1D, self).__init__()
         
-        # --- DİYET KISMI BAŞLIYOR ---
-        # Giriş Kanalı: 1 -> 32 (Eskiden 64'tü)
         self.inplanes = 32
         self.conv1 = nn.Conv1d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm1d(32)
         self.relu = nn.ReLU(inplace=True)
         
-        # Katmanlar (Genişlikleri yarıya indirdik)
-        # Layer 1: 32 Filtre
         self.layer1 = self._make_layer(32, 2, stride=1)
-        # Layer 2: 64 Filtre
         self.layer2 = self._make_layer(64, 2, stride=2)
-        # Layer 3: 128 Filtre
         self.layer3 = self._make_layer(128, 2, stride=2)
-        # Layer 4: 256 Filtre (Eskiden 512 idi)
         self.layer4 = self._make_layer(256, 2, stride=2)
         
         self.avgpool = nn.AdaptiveAvgPool1d(1)
-        # Çıkış katmanı da küçüldü (256 -> num_classes)
+        
+        # --- YENİ EKLENEN KISIM: DROPOUT ---
+        self.dropout = nn.Dropout(p=0.5) # %50 unutma oranı (Overfitting ilacı)
+        # -----------------------------------
+        
         self.fc = nn.Linear(256, num_classes)
 
     def _make_layer(self, planes, blocks, stride=1):
@@ -93,13 +92,19 @@ class ResNet1D(nn.Module):
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
+        
+        # --- DROPOUT BURADA DEVREYE GİRİYOR ---
+        x = self.dropout(x)
+        # --------------------------------------
+        
         x = self.fc(x)
         return x
     
     def count_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
+# Factory fonksiyonu aynı kalsın
 def create_ids_model(mode: str = "multiclass", num_classes: int = 8, input_dim: int = 39):
-    print(f"[FACTORY] Initializing ResNet1D-Lite (Optimized ~960k Params).")
+    print(f"[FACTORY] Initializing ResNet1D-Lite (Dropout Added).")
     model = ResNet1D(num_classes=num_classes, input_dim=input_dim)
     return model

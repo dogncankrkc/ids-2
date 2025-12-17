@@ -3,29 +3,29 @@
 # ============================================================
 
 model:
-  type: "ids_resnet1d" # Kodda tanımlı factory fonksiyonu çalışır
+  type: "ids_resnet1d"
   num_classes: 8
   input_dim: 39
 
 data:
-  # CNN'de batch size'ı 128 tutmak genelde en iyi sonucu verir.
-  # Çok büyük yaparsan (512 gibi) genelleme yeteneği düşebilir.
   batch_size: 128
   num_workers: 0
 
 training:
-  epochs: 60            # CNN çabuk öğrenir ama tam oturması için süre verelim
+  epochs: 60
   
-  learning_rate: 0.001  # AdamW için altın standart
-  weight_decay: 0.0005  # Overfitting engellemek için
+  learning_rate: 0.001
+  weight_decay: 0.0005  # HARİKA: Overfitting'i baskılamak için bunu artırman çok doğru.
   
   optimizer: "adamw"
 
-  scheduler: "cosine"
-  scheduler_patience: 2      # 4 Epoch gelişmezse müdahale et
-  scheduler_factor: 0.5      # LR'yi 5 kat düşür (İnce işçiliğe geç)
+  # --- DÜZELTME BURADA ---
+  scheduler: "plateau"    # 'cosine' yerine 'plateau' kalsın ki aşağıdaki patience çalışsın.
+  scheduler_patience: 2   # ÇOK İYİ: 2 Epoch boyunca iyileşme yoksa ACIMADAN müdahale et.
+  scheduler_factor: 0.5   # LR'yi yarıya indir.
+  # -----------------------
   
-  early_stopping_patience: 15 # Pes etme sınırı
+  early_stopping_patience: 15
 
 checkpoint:
   save_dir: "models/checkpoints/ids_multiclass_resnet1d_final"
