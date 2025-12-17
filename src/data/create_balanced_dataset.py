@@ -1,38 +1,34 @@
 """
-FINAL DATASET CREATOR – CIC-IoT-2023 (CAPPED, NO LEAKAGE)
+FINAL DATASET CREATOR – CIC-IoT-2023 (CAPPED, CLEAN)
 
-OUTPUT:
-- data/processed/CIC2023_CAPPED.csv
-
-IMPORTANT:
-- NO SMOTE
-- NO SCALER
-- NO ENCODER
-- NO TRAIN/VAL/TEST SPLIT
-
-This file ONLY:
-✓ maps raw labels → 8-class multiclass
-✓ caps samples safely
-✓ cleans NaN / Inf
-✓ adds PAD feature
+Görevi:
+1. Dev boyuttaki ham veriyi parça parça okur.
+2. Etiketleri sadeleştirir (Map to 8 classes).
+3. Belirlenen sayılarda (Cap) veriyi alıp 'data/processed' klasörüne kaydeder.
+4. SMOTE veya Scaler BURADA YAPILMAZ (Onlar preprocess.py işi).
 """
 
 import os
 import numpy as np
 import pandas as pd
 
-# ============================================================
-# CONFIG
-# ============================================================
+# ============================
+# CONFIGURATION
+# ============================
 
 INPUT_PATH = "data/raw/CIC2023_FULL_MERGED.csv"
 OUTPUT_PATH = "data/processed/CIC2023_CAPPED.csv"
 
 CHUNK_SIZE = 1_000_000
-BENIGN_CAP = 1_000_000
-ATTACK_CAP = 100_000
-PAD_FEATURE_NAME = "PAD_0"
 
+# Strateji: Benign'i makul seviyede tut, Atakları maksimum al.
+# preprocess.py aşamasında Benign daha da azaltılacak (Undersample).
+BENIGN_CAP = 250_000  
+ATTACK_CAP = 100_000  # Varsa hepsini al, yoksa 100k'da dur.
+
+# ------------------------------------------------------------
+# SELECTED FEATURES
+# ------------------------------------------------------------
 SELECTED_FEATURES = [
     'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate',
     'fin_flag_number', 'syn_flag_number', 'rst_flag_number',
@@ -41,150 +37,107 @@ SELECTED_FEATURES = [
     'rst_count', 'HTTP', 'HTTPS', 'DNS', 'Telnet', 'SMTP', 'SSH',
     'IRC', 'TCP', 'UDP', 'DHCP', 'ARP', 'ICMP', 'IGMP', 'IPv',
     'LLC', 'Tot sum', 'Min', 'Max', 'AVG', 'Std', 'Tot size',
-    'IAT', 'Number', 'Variance',
-    PAD_FEATURE_NAME
+    'IAT', 'Number', 'Variance'
 ]
 
-TARGET_CLASSES = [
-    "Benign", "DDoS", "DoS", "Recon",
-    "Web", "BruteForce", "Spoofing", "Mirai"
-]
-
-# ============================================================
+# ============================
 # LABEL MAPPING
-# ============================================================
-
+# ============================
 def map_to_multiclass(label: str) -> str:
     label = str(label).strip().upper()
 
-    if label == 'NAN' or label == '':
-        return 'Other'
+    if label == 'NAN' or label == '': return 'Other'
+    if 'BENIGN' in label: return 'Benign'
+    if 'DDOS' in label: return 'DDoS'
+    if 'DOS' in label: return 'DoS'
+    if any(x in label for x in ['RECON', 'VULNERABILITY', 'PING', 'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']): return 'Recon'
+    if any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER', 'COMMAND', 'BACKDOOR', 'MALWARE']): return 'Web'
+    if 'BRUTEFORCE' in label or 'DICTIONARY' in label: return 'BruteForce'
+    if 'SPOOFING' in label or 'MITM' in label: return 'Spoofing'
+    if 'MIRAI' in label: return 'Mirai'
+    return 'Other'
 
-    if 'BENIGN' in label:
-        return 'Benign'
-
-    elif 'DDOS' in label:
-        return 'DDoS'
-
-    elif 'DOS' in label:
-        return 'DoS'
-
-    elif (
-        'RECON' in label or
-        'VULNERABILITYSCAN' in label or
-        'PING' in label or
-        'PORTSCAN' in label or
-        'OSSCAN' in label or
-        'HOSTDISCOVERY' in label
-    ):
-        return 'Recon'
-
-    elif (
-        'XSS' in label or
-        'SQL' in label or
-        'UPLOAD' in label or
-        'BROWSER' in label or
-        'COMMAND' in label or
-        'BACKDOOR' in label or
-        'MALWARE' in label
-    ):
-        return 'Web'
-
-    elif 'BRUTEFORCE' in label or 'DICTIONARY' in label:
-        return 'BruteForce'
-
-    elif 'SPOOFING' in label or 'MITM' in label:
-        return 'Spoofing'
-
-    elif 'MIRAI' in label:
-        return 'Mirai'
-
-    else:
-        return 'Other'
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
+# ============================
+# MAIN GENERATOR
+# ============================
 def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
-    collected = {cls: 0 for cls in TARGET_CLASSES}
-    chunks = []
+    # Sayaçlar
+    collected = {
+        'Benign': 0, 'DDoS': 0, 'DoS': 0, 'Recon': 0,
+        'Web': 0, 'BruteForce': 0, 'Spoofing': 0, 'Mirai': 0
+    }
+    
+    chunks_to_save = [] # Verileri burada toplayacağız
 
-    print("[INFO] Starting capped dataset creation")
+    print(f"[INFO] Dataset Creation Started. Caps -> Benign: {BENIGN_CAP}, Attack: {ATTACK_CAP}")
 
+    # CSV'yi parça parça oku
     for i, chunk in enumerate(pd.read_csv(INPUT_PATH, chunksize=CHUNK_SIZE)):
-        print(f"[INFO] Processing chunk {i+1}")
+        print(f" -> Processing Chunk {i+1}...", end="\r")
 
-        # -----------------------------------------
-        # LABEL SOURCE (CRITICAL FIX)
-        # -----------------------------------------
+        # 1. Etiket Sütununu Bul
         if "multiclass_label" in chunk.columns:
-            raw_labels = chunk["multiclass_label"]
+            label_col = "multiclass_label"
         elif "label" in chunk.columns:
-            raw_labels = chunk["label"]
+            label_col = "label"
         else:
-            raise ValueError("No label column found in dataset")
+            continue # Etiket yoksa bu parçayı geç
 
-        # 1️⃣ Label mapping
-        chunk["multiclass_label"] = raw_labels.apply(map_to_multiclass)
+        # 2. Etiketleri Dönüştür (Mapping)
+        chunk["multiclass_label"] = chunk[label_col].apply(map_to_multiclass)
 
-        # 2️⃣ DROP Other (KRİTİK SATIR)
+        # 3. 'Other' olanları at
         chunk = chunk[chunk["multiclass_label"] != "Other"]
 
-        # -----------------------------------------
-        # FEATURE CLEANING
-        # -----------------------------------------
-        chunk[PAD_FEATURE_NAME] = 0.0
+        # 4. Özellikleri Seç ve Temizle
+        # Sadece seçili featureları al
+        chunk = chunk[SELECTED_FEATURES + ["multiclass_label"]]
+        
+        # Sonsuz sayıları (inf) temizle
         chunk.replace([np.inf, -np.inf], np.nan, inplace=True)
-        chunk.dropna(subset=SELECTED_FEATURES, inplace=True)
+        chunk.dropna(inplace=True)
 
-        # -----------------------------------------
-        # CLASS CAPPING
-        # -----------------------------------------
+        # 5. Capping (Limit koyma)
         for cls, group in chunk.groupby("multiclass_label"):
-            cap = BENIGN_CAP if cls == "Benign" else ATTACK_CAP
-            remaining = cap - collected[cls]
+            target_cap = BENIGN_CAP if cls == "Benign" else ATTACK_CAP
+            
+            current_count = collected.get(cls, 0)
+            if current_count >= target_cap:
+                continue # Bu sınıf dolduysa alma
 
-            if remaining <= 0:
-                continue
-
-            take = group.sample(
-                n=min(len(group), remaining),
-                random_state=42
-            )
-
+            needed = target_cap - current_count
+            
+            # İhtiyaç kadarını al
+            take = group.head(needed) # veya .sample(n=min(len(group), needed))
+            
+            chunks_to_save.append(take)
             collected[cls] += len(take)
-            chunks.append(take)
 
-        # -----------------------------------------
-        # EARLY STOP
-        # -----------------------------------------
-        if all(
-            collected[c] >= (BENIGN_CAP if c == "Benign" else ATTACK_CAP)
-            for c in collected
-        ):
-            print("[INFO] All caps reached. Stopping early.")
+        # 6. Erken Durdurma (Her şey dolduysa boşuna okuma)
+        if all(val >= (BENIGN_CAP if key == "Benign" else ATTACK_CAP) for key, val in collected.items()):
+            print(f"\n[INFO] All caps reached at chunk {i+1}. Stopping.")
             break
 
-    # -----------------------------------------
-    # FINAL DATASET
-    # -----------------------------------------
-    df = pd.concat(chunks, ignore_index=True)
-    df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+    # ============================
+    # SAVE
+    # ============================
+    print("\n[INFO] Concatenating and saving...")
+    if not chunks_to_save:
+        print("[ERROR] No data collected!")
+        return
 
-    df["binary_label"] = (df["multiclass_label"] != "Benign").astype(int)
+    df_final = pd.concat(chunks_to_save, ignore_index=True)
+    
+    # Karıştır
+    df_final = df_final.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    df.to_csv(OUTPUT_PATH, index=False)
-
-    print("\n✅ CAPPED DATASET SAVED:", OUTPUT_PATH)
     print("\n[FINAL DISTRIBUTION]")
-    print(df["multiclass_label"].value_counts())
-    print("\n[BINARY DISTRIBUTION]")
-    print(df["binary_label"].value_counts())
+    print(df_final["multiclass_label"].value_counts())
 
+    df_final.to_csv(OUTPUT_PATH, index=False)
+    print(f"\n[SUCCESS] Dataset saved to: {OUTPUT_PATH}")
 
 if __name__ == "__main__":
     main()

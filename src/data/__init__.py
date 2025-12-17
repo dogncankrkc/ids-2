@@ -10,13 +10,11 @@ This package provides:
 """
 
 from .preprocess import (
-    preprocess_binary,
     preprocess_multiclass,
     preprocess_single_sample, 
 )
 
 __all__ = [
-    "preprocess_binary",
     "preprocess_multiclass",
     "preprocess_single_sample",
 ]

@@ -1,28 +1,28 @@
-# ============================================================
-# MULTICLASS IDS CONFIGURATION (CNN2D – 5x8 GRID)
-# ============================================================
-
 model:
-  type: "ids_cnn_2d"   # CNN2D architecture (1x5x8 input grid)
-  num_classes: 8       # 7 attack categories + Benign
+  type: "ids_resnet_mlp"
+  num_classes: 8
+  input_dim: 39
 
 data:
-  batch_size: 128      # Stable for CNN2D on CPU/MPS
-  num_workers: 0       # macOS / MPS safe setting
+  batch_size: 256
+  num_workers: 0
 
 training:
-  epochs: 50
-
-  learning_rate: 0.0003   # Stable LR for AdamW
-  weight_decay: 0.01      # Prevents overfitting
-
+  epochs: 70            # Attention olduğu için öğrenme biraz daha uzun sürebilir
+  
+  learning_rate: 0.001  # Sabit
+  weight_decay: 0.0001  # İdeal
+  
   optimizer: "adamw"
 
-  scheduler: "plateau"    # ReduceLROnPlateau (val loss based)
-  early_stopping_patience: 10
+  scheduler: "plateau"
+  scheduler_patience: 5      # 5 Epoch bekle
+  scheduler_factor: 0.5      # Yarıya düşür (Sert düşürme, yumuşak in)
+  
+  early_stopping_patience: 15
 
 checkpoint:
-  save_dir: "models/checkpoints/ids_multiclass_cnn2d"
+  save_dir: "models/checkpoints/ids_multiclass_se_attention"
 
 logging:
   verbose: true
