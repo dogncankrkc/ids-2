@@ -1,9 +1,9 @@
 # ============================================================
-# MULTICLASS CONFIG (RESNET1D - HIGH ACCURACY)
+# MULTICLASS CONFIG (HYBRID RESNET - FINAL ATTEMPT)
 # ============================================================
 
 model:
-  type: "ids_resnet1d"
+  type: "ids_hybrid_resnet" # İsim değişikliği loglarda görünmesi için
   num_classes: 8
   input_dim: 39
 
@@ -15,20 +15,23 @@ training:
   epochs: 60
   
   learning_rate: 0.001
-  weight_decay: 0.0005  # HARİKA: Overfitting'i baskılamak için bunu artırman çok doğru.
+  
+  # Dropout var ama yine de weight_decay ile destekliyoruz
+  weight_decay: 0.0005
   
   optimizer: "adamw"
 
-  # --- DÜZELTME BURADA ---
-  scheduler: "plateau"    # 'cosine' yerine 'plateau' kalsın ki aşağıdaki patience çalışsın.
-  scheduler_patience: 2   # ÇOK İYİ: 2 Epoch boyunca iyileşme yoksa ACIMADAN müdahale et.
-  scheduler_factor: 0.5   # LR'yi yarıya indir.
-  # -----------------------
+  # Agresif Scheduler: 2 Epoch boyunca iyileşme yoksa LR'yi düşür
+  # Bu, o %78'lik takılmayı kırmak için en önemli silahımız.
+  scheduler: "plateau"
+  scheduler_patience: 2
+  scheduler_factor: 0.5
   
   early_stopping_patience: 15
 
 checkpoint:
-  save_dir: "models/checkpoints/ids_multiclass_resnet1d_final"
+  # Checkpoint klasörünü değiştirelim ki eskilerle karışmasın
+  save_dir: "models/checkpoints/ids_multiclass_hybrid_final"
 
 logging:
   verbose: true
