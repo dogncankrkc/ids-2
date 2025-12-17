@@ -341,10 +341,7 @@ def main():
     # --------------------------------------------------------
     # Final Evaluation
     # --------------------------------------------------------
-    print("\n" + "=" * 40)
-    print("FINAL TEST EVALUATION")
-    print("=" * 40)
-
+    print("\n[INFO] Running final evaluation on test set...")
     test_results = trainer.test(test_loader)
 
     metrics_path = os.path.join(

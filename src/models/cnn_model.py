@@ -1,108 +1,105 @@
 """
-ResNet-MLP with Squeeze-and-Excitation (SE) Attention
-VERSION: FINAL PRO (Attention Mechanism)
-Target: High F1-Score & Accuracy
-Feature: Dynamic Feature Weighting (Model decides what's important per sample)
+Optimized ResNet1D Architecture for IDS (LITE VERSION)
+Target: ~960k Parameters (Perfect Balance for Edge AI)
+Design: 
+  - Reduced Channel Width (Starts at 32 instead of 64)
+  - Retains Depth (Intelligence) but reduces Width (Bloat)
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# =====================================================
-# SE BLOCK (ATTENTION MECHANISM)
-# =====================================================
-class SEBlock(nn.Module):
-    def __init__(self, channel, reduction=16):
-        super().__init__()
-        # Özellik sayısını önce daralt (Squeeze), sonra genişlet (Excitation)
-        self.fc = nn.Sequential(
-            nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(),
-            nn.Linear(channel // reduction, channel, bias=False),
-            nn.Sigmoid() # 0 ile 1 arası önem skoru üretir
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv1d(
+            in_channels, out_channels, kernel_size=3, 
+            stride=stride, padding=1, bias=False
         )
+        self.bn1 = nn.BatchNorm1d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv1d(
+            out_channels, out_channels, kernel_size=3, 
+            stride=1, padding=1, bias=False
+        )
+        self.bn2 = nn.BatchNorm1d(out_channels)
+        self.downsample = downsample
 
     def forward(self, x):
-        # x: (Batch, Channel)
-        y = self.fc(x)
-        return x * y # Özellikleri önem skorlarıyla çarp
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        if self.downsample:
+            residual = self.downsample(x)
+        out += residual
+        out = self.relu(out)
+        return out
 
-# =====================================================
-# RESIDUAL BLOCK WITH ATTENTION
-# =====================================================
-class ResidualBlockFC(nn.Module):
-    def __init__(self, in_features, out_features, dropout=0.3):
-        super().__init__()
-        
-        self.block = nn.Sequential(
-            nn.Linear(in_features, out_features),
-            nn.BatchNorm1d(out_features),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(out_features, out_features),
-            nn.BatchNorm1d(out_features)
-        )
-        
-        # YENİ: Attention Bloğu
-        # reduction=16: Parametre tasarrufu için oranı küçültür
-        self.se = SEBlock(out_features, reduction=16)
-        
-        self.shortcut = nn.Sequential()
-        if in_features != out_features:
-            self.shortcut = nn.Sequential(
-                nn.Linear(in_features, out_features),
-                nn.BatchNorm1d(out_features)
-            )
-            
-    def forward(self, x):
-        residual = self.shortcut(x)
-        out = self.block(x)
-        out = self.se(out) # Çıkışı Attention ile ağırlıklandır
-        return F.gelu(out + residual)
-
-# =====================================================
-# MAIN MODEL
-# =====================================================
-class IDS_ResNet_MLP(nn.Module):
+class ResNet1D(nn.Module):
     def __init__(self, num_classes=8, input_dim=39):
-        super().__init__()
+        super(ResNet1D, self).__init__()
         
-        # 1. Stem (Genişletilmiş Giriş - Projection)
-        self.stem = nn.Sequential(
-            nn.Linear(input_dim, input_dim * 4), # 39 -> 156
-            nn.BatchNorm1d(input_dim * 4),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(input_dim * 4, 512),       # 156 -> 512
-            nn.BatchNorm1d(512),
-            nn.GELU()
-        )
+        # --- DİYET KISMI BAŞLIYOR ---
+        # Giriş Kanalı: 1 -> 32 (Eskiden 64'tü)
+        self.inplanes = 32
+        self.conv1 = nn.Conv1d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(32)
+        self.relu = nn.ReLU(inplace=True)
         
-        # 2. Deep Body with Attention
-        # Parametreleri çok şişirmemek için dropout'u biraz artırdık
-        self.layer1 = ResidualBlockFC(512, 512, dropout=0.3) 
-        self.layer2 = ResidualBlockFC(512, 256, dropout=0.3) 
-        self.layer3 = ResidualBlockFC(256, 128, dropout=0.3)
+        # Katmanlar (Genişlikleri yarıya indirdik)
+        # Layer 1: 32 Filtre
+        self.layer1 = self._make_layer(32, 2, stride=1)
+        # Layer 2: 64 Filtre
+        self.layer2 = self._make_layer(64, 2, stride=2)
+        # Layer 3: 128 Filtre
+        self.layer3 = self._make_layer(128, 2, stride=2)
+        # Layer 4: 256 Filtre (Eskiden 512 idi)
+        self.layer4 = self._make_layer(256, 2, stride=2)
         
-        # 3. Head
-        self.fc_out = nn.Linear(128, num_classes)
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        # Çıkış katmanı da küçüldü (256 -> num_classes)
+        self.fc = nn.Linear(256, num_classes)
+
+    def _make_layer(self, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes:
+            downsample = nn.Sequential(
+                nn.Conv1d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm1d(planes),
+            )
+        layers = []
+        layers.append(ResidualBlock(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes
+        for _ in range(1, blocks):
+            layers.append(ResidualBlock(self.inplanes, planes))
+        return nn.Sequential(*layers)
 
     def forward(self, x):
-        if x.dim() == 3:
-            x = x.squeeze(1)
-            
-        x = self.stem(x)
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        x = self.fc_out(x)
-        return x
+        x = self.layer4(x)
 
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
+    
     def count_parameters(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 def create_ids_model(mode: str = "multiclass", num_classes: int = 8, input_dim: int = 39):
-    print(f"[FACTORY] Initializing IDS_ResNet_MLP (SE-Attention Edition).")
-    model = IDS_ResNet_MLP(num_classes=num_classes, input_dim=input_dim)
+    print(f"[FACTORY] Initializing ResNet1D-Lite (Optimized ~960k Params).")
+    model = ResNet1D(num_classes=num_classes, input_dim=input_dim)
     return model

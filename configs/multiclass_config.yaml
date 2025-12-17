@@ -1,28 +1,34 @@
+# ============================================================
+# MULTICLASS CONFIG (RESNET1D - HIGH ACCURACY)
+# ============================================================
+
 model:
-  type: "ids_resnet_mlp"
+  type: "ids_resnet1d" # Kodda tanımlı factory fonksiyonu çalışır
   num_classes: 8
   input_dim: 39
 
 data:
-  batch_size: 256
+  # CNN'de batch size'ı 128 tutmak genelde en iyi sonucu verir.
+  # Çok büyük yaparsan (512 gibi) genelleme yeteneği düşebilir.
+  batch_size: 128
   num_workers: 0
 
 training:
-  epochs: 70            # Attention olduğu için öğrenme biraz daha uzun sürebilir
+  epochs: 60            # CNN çabuk öğrenir ama tam oturması için süre verelim
   
-  learning_rate: 0.001  # Sabit
-  weight_decay: 0.0001  # İdeal
+  learning_rate: 0.001  # AdamW için altın standart
+  weight_decay: 0.0005  # Overfitting engellemek için
   
   optimizer: "adamw"
 
-  scheduler: "plateau"
-  scheduler_patience: 5      # 5 Epoch bekle
-  scheduler_factor: 0.5      # Yarıya düşür (Sert düşürme, yumuşak in)
+  scheduler: "cosine"
+  scheduler_patience: 2      # 4 Epoch gelişmezse müdahale et
+  scheduler_factor: 0.5      # LR'yi 5 kat düşür (İnce işçiliğe geç)
   
-  early_stopping_patience: 15
+  early_stopping_patience: 15 # Pes etme sınırı
 
 checkpoint:
-  save_dir: "models/checkpoints/ids_multiclass_se_attention"
+  save_dir: "models/checkpoints/ids_multiclass_resnet1d_final"
 
 logging:
   verbose: true
