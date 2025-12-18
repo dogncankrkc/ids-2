@@ -4,7 +4,7 @@
 
 model:
   type: "ids_resnet_nano" # Factory'deki isimle uyumlu
-  num_classes: 7          # ÖNEMLİ: DoS ve DDoS birleştiği için 7 oldu
+  num_classes: 7          # ÖNEMLİ: benign kaldırıldı
   input_dim: 39
 
 data:
@@ -32,7 +32,7 @@ training:
 
 checkpoint:
   # Klasör ismini modelle uyumlu yapalım karışmasın
-  save_dir: "models/checkpoints/ids_multiclass_resnet_nano_7class"
+  save_dir: "models/checkpoints/ids_multiclass_resnet_nano_7class_gan_balanced"
 
 logging:
   verbose: true

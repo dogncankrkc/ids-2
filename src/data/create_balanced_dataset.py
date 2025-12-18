@@ -1,35 +1,30 @@
 """
-FINAL DATASET CREATOR – CIC-IoT-2023 (MERGED EDITION)
+FINAL DATASET CREATOR – CIC-IoT-2023 (SEPARATE ATTACKS ONLY)
 
 Purpose:
-1. Read huge raw CSV in chunks.
-2. Map raw labels to 7 IDS classes (DoS & DDoS merged).
-3. Cap dataset size (Strategic limits).
-4. Save clean capped dataset for training.
+1. Read huge raw CSV.
+2. Map raw labels to 7 DISTINCT ATTACK CLASSES (DoS & DDoS separated).
+3. DROP BENIGN traffic completely.
+4. Cap large attacks at 100k, keep small attacks as is.
 """
 
 import os
 import numpy as np
 import pandas as pd
+import argparse
 
 # ============================
 # CONFIGURATION
 # ============================
 
-INPUT_PATH = "data/raw/CIC2023_FULL_MERGED.csv"
-OUTPUT_PATH = "data/processed/CIC2023_CAPPED.csv"
+DEFAULT_INPUT = "data/raw/CIC2023_FULL_MERGED.csv"
+DEFAULT_OUTPUT = "data/processed/CIC2023_SEPARATE_ATTACK_ONLY.csv"
 
 CHUNK_SIZE = 1_000_000
 
-# Stratejik Limitler:
-# Benign'i gerçekçi tutuyoruz (250k).
-# Saldırıları 100k ile sınırlıyoruz ki eğitim çok uzamasın.
-BENIGN_CAP = 250_000
-ATTACK_CAP = 100_000
+# Sadece saldırı limiti var. Benign yok.
+ATTACK_CAP = 100_000 
 
-# ------------------------------------------------------------
-# SELECTED FEATURES (AVAILABLE IN CSV)
-# ------------------------------------------------------------
 SELECTED_FEATURES = [
     'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate',
     'fin_flag_number', 'syn_flag_number', 'rst_flag_number',
@@ -42,41 +37,37 @@ SELECTED_FEATURES = [
 ]
 
 # ============================
-# LABEL MAPPING (STRATEGIC MERGE)
+# LABEL MAPPING (ATTACKS ONLY)
 # ============================
-def map_to_multiclass(label: str) -> str:
+def map_to_separate_attacks(label: str) -> str:
     label = str(label).strip().upper()
 
     if label == 'NAN' or label == '':
         return 'Other'
     
-    # 1. Benign
+    # --- DEĞİŞİKLİK BURADA: BENIGN -> OTHER (ÇÖPE GİDER) ---
     if 'BENIGN' in label:
-        return 'Benign'
+        return 'Other' 
+    # -------------------------------------------------------
     
-    # 2. DoS ve DDoS BİRLEŞİYOR -> 'DoS-DDoS'
-    # Teknik Açıklama: Elimizdeki özellik setinde 'Source Rate' olmadığı için
-    # model bu ikisini ayıramıyor. Performans için birleştirildi.
-    if 'DDOS' in label or 'DOS' in label:
-        return 'DoS-DDoS'
+    if 'DDOS' in label:
+        return 'DDoS'
+    
+    if 'DOS' in label:
+        return 'DoS'
         
-    # 3. Recon (Keşif)
     if any(x in label for x in ['RECON', 'VULNERABILITY', 'PING', 'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']):
         return 'Recon'
         
-    # 4. Web Saldırıları
     if any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER', 'COMMAND', 'BACKDOOR', 'MALWARE']):
         return 'Web'
         
-    # 5. Kaba Kuvvet
     if 'BRUTEFORCE' in label or 'DICTIONARY' in label:
         return 'BruteForce'
         
-    # 6. Spoofing
     if 'SPOOFING' in label or 'MITM' in label:
         return 'Spoofing'
         
-    # 7. Mirai (IoT Botnet)
     if 'MIRAI' in label:
         return 'Mirai'
         
@@ -86,12 +77,17 @@ def map_to_multiclass(label: str) -> str:
 # MAIN GENERATOR
 # ============================
 def main():
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=str, default=DEFAULT_INPUT)
+    parser.add_argument("--output", type=str, default=DEFAULT_OUTPUT)
+    args = parser.parse_args()
 
-    # Sayaçları yeni sınıflara göre güncelle
+    os.makedirs(os.path.dirname(args.output), exist_ok=True)
+
+    # Benign yok, sadece saldırılar
     collected = {
-        'Benign': 0, 
-        'DoS-DDoS': 0, # Birleşmiş sınıf
+        'DDoS': 0,
+        'DoS': 0,
         'Recon': 0,
         'Web': 0, 
         'BruteForce': 0, 
@@ -101,34 +97,37 @@ def main():
     
     chunks_to_save = []
 
-    print(f"[INFO] Creating capped dataset (Merged Edition)...")
-    print(f"[INFO] Target Caps -> Benign: {BENIGN_CAP}, Attacks: {ATTACK_CAP}")
+    print(f"[INFO] Creating SEPARATE ATTACK-ONLY dataset...")
+    print(f"[INFO] Attack Cap: {ATTACK_CAP}")
 
-    for i, chunk in enumerate(pd.read_csv(INPUT_PATH, chunksize=CHUNK_SIZE)):
+    for i, chunk in enumerate(pd.read_csv(args.input, chunksize=CHUNK_SIZE)):
         print(f" -> Processing chunk {i+1}", end="\r")
 
-        # Etiket sütununu bul
-        if "multiclass_label" in chunk.columns:
-            label_col = "multiclass_label"
-        elif "label" in chunk.columns:
-            label_col = "label"
-        else:
+        label_col = None
+        for col in ["multiclass_label", "label", "Label"]:
+            if col in chunk.columns:
+                label_col = col
+                break
+        
+        if label_col is None:
             continue
 
-        # Dönüştür
-        chunk["multiclass_label"] = chunk[label_col].apply(map_to_multiclass)
-
-        # Temizle
+        chunk["multiclass_label"] = chunk[label_col].apply(map_to_separate_attacks)
+        
+        # 'Other' (Benign dahil) olanları atıyoruz
         chunk = chunk[chunk["multiclass_label"] != "Other"]
+        
+        for feat in SELECTED_FEATURES:
+            if feat not in chunk.columns:
+                chunk[feat] = 0
+                
         chunk = chunk[SELECTED_FEATURES + ["multiclass_label"]]
         chunk.replace([np.inf, -np.inf], np.nan, inplace=True)
         chunk.dropna(inplace=True)
 
-        # Topla (Capping)
         for cls, group in chunk.groupby("multiclass_label"):
-            cap = BENIGN_CAP if cls == "Benign" else ATTACK_CAP
+            cap = ATTACK_CAP
             
-            # Eğer 'DoS-DDoS' sınıfıysa, DoS ve DDoS toplamını kontrol et
             current_count = collected.get(cls, 0)
             if current_count >= cap:
                 continue
@@ -139,12 +138,10 @@ def main():
             chunks_to_save.append(take)
             collected[cls] += len(take)
 
-        # Erken Durdurma
-        if all(val >= (BENIGN_CAP if key == "Benign" else ATTACK_CAP) for key, val in collected.items()):
-            print(f"\n[INFO] Caps reached at chunk {i+1}. Stopping early.")
+        if all(val >= ATTACK_CAP for key, val in collected.items()):
+            print(f"\n[INFO] All caps reached at chunk {i+1}. Stopping early.")
             break
 
-    # Kaydet
     print("\n[INFO] Concatenating and saving...")
     if not chunks_to_save:
         print("[ERROR] No data collected!")
@@ -153,11 +150,11 @@ def main():
     df_final = pd.concat(chunks_to_save, ignore_index=True)
     df_final = df_final.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    print("\n[FINAL CLASS DISTRIBUTION]")
+    print("\n[FINAL DISTRIBUTION - ATTACK ONLY (SEPARATE)]")
     print(df_final["multiclass_label"].value_counts())
 
-    df_final.to_csv(OUTPUT_PATH, index=False)
-    print(f"\n[SUCCESS] Dataset saved to: {OUTPUT_PATH}")
+    df_final.to_csv(args.output, index=False)
+    print(f"\n[SUCCESS] Dataset saved to: {args.output}")
 
 if __name__ == "__main__":
     main()
