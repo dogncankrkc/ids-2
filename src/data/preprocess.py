@@ -1,7 +1,7 @@
 """
 Preprocessing Utilities for CIC-IoT-2023
-VERSION: ROBUST HYBRID (RobustScaler + Selective SMOTE + Benign Cap)
-Goal: Fix the 80% accuracy wall by handling outliers correctly.
+VERSION: UNIVERSAL (Smart Check for Benign + RobustScaler)
+Goal: Works for both 'Binary' and 'Attack-Only' datasets automatically.
 """
 
 import os
@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, RobustScaler # KRİTİK DEĞİŞİKLİK
+from sklearn.preprocessing import LabelEncoder, RobustScaler
 from imblearn.over_sampling import SMOTE
 
 # --------------------------------------------------
@@ -60,33 +60,35 @@ def preprocess_multiclass(df: pd.DataFrame):
     )
 
     # --------------------------------------------------
-    # 3️⃣ UNDERSAMPLE BENIGN (CRITICAL STEP)
+    # 3️⃣ UNDERSAMPLE BENIGN (SMART CHECK) - GÜNCELLENDİ
     # --------------------------------------------------
-    # Eğitim setinde Benign çok baskın olursa model saldırıları öğrenmez.
-    # Benign sayısını, en büyük saldırı sınıfının sayısına (veya makul bir sınıra) çekelim.
-    benign_id = class_map['Benign']
-    indices_benign = np.where(y_train == benign_id)[0]
-    indices_others = np.where(y_train != benign_id)[0]
+    # Artık 'Benign' var mı diye kontrol ediyoruz.
+    # Attack-Only setinde Benign olmayacağı için hata vermemeli.
     
-    # Benign sayısını saldırıların ortalamasına yakın bir yere çek (örn: 100k)
-    # Çok da azaltmayalım ki Benign'i unutmasın.
-    TARGET_BENIGN = 100_000 
-    
-    if len(indices_benign) > TARGET_BENIGN:
-        print(f"[INFO] Capping Training Benign samples to {TARGET_BENIGN} (Avoid laziness)")
-        indices_benign = np.random.choice(indices_benign, TARGET_BENIGN, replace=False)
+    if 'Benign' in class_map:
+        print("[INFO] Benign class detected. Checking for capping...")
+        benign_id = class_map['Benign']
+        indices_benign = np.where(y_train == benign_id)[0]
+        indices_others = np.where(y_train != benign_id)[0]
         
-    indices_keep = np.concatenate([indices_others, indices_benign])
-    np.random.shuffle(indices_keep)
-    
-    X_train = X_train[indices_keep]
-    y_train = y_train[indices_keep]
+        # Binary veya Mixed modda Benign çok fazlaysa kısıyoruz.
+        TARGET_BENIGN = 100_000 
+        
+        if len(indices_benign) > TARGET_BENIGN:
+            print(f"[INFO] Capping Training Benign samples to {TARGET_BENIGN}")
+            indices_benign = np.random.choice(indices_benign, TARGET_BENIGN, replace=False)
+            
+            indices_keep = np.concatenate([indices_others, indices_benign])
+            np.random.shuffle(indices_keep)
+            
+            X_train = X_train[indices_keep]
+            y_train = y_train[indices_keep]
+    else:
+        print("[INFO] No Benign class found (Attack-Only Mode). Skipping undersampling.")
 
     # --------------------------------------------------
-    # 4️⃣ ROBUST SCALING (FIT TRAIN ONLY) - KRİTİK!
+    # 4️⃣ ROBUST SCALING
     # --------------------------------------------------
-    # StandardScaler YERİNE RobustScaler kullanıyoruz.
-    # Bu, DDoS paketlerindeki devasa sayıların (Outlier) modeli bozmasını engeller.
     scaler = RobustScaler()
     X_train = scaler.fit_transform(X_train)
     X_val   = scaler.transform(X_val)
@@ -95,32 +97,37 @@ def preprocess_multiclass(df: pd.DataFrame):
     joblib.dump(scaler, SCALER_PATH)
 
     # --------------------------------------------------
-    # 5️⃣ SELECTIVE SMOTE (GPT'nin Fikri + Robust Scaler)
+    # 5️⃣ SELECTIVE SMOTE
     # --------------------------------------------------
     unique, counts = np.unique(y_train, return_counts=True)
     class_counts = dict(zip(unique, counts))
     
-    # Hedef: En kalabalık sınıfın yarısı kadar olsun, daha fazlası gürültü yaratır.
-    max_count = max(class_counts.values())
-    target_count = int(max_count * 0.5) 
+    # Hedef: En kalabalık sınıfın %50'si kadar olsun.
+    if len(class_counts) > 1: # Sadece tek sınıf varsa SMOTE patlar
+        max_count = max(class_counts.values())
+        target_count = int(max_count * 0.5) 
 
-    smote_targets = {}
-    for cls, cnt in class_counts.items():
-        if cnt < target_count:
-            smote_targets[cls] = target_count
+        smote_targets = {}
+        for cls, cnt in class_counts.items():
+            if cnt < target_count:
+                smote_targets[cls] = target_count
 
-    if smote_targets:
-        print(f"[INFO] Applying SMOTE to minorities (Target: {target_count}): {list(smote_targets.keys())}")
-        smote = SMOTE(
-            sampling_strategy=smote_targets,
-            random_state=42,
-            k_neighbors=5,
-            n_jobs=-1
-        )
-        X_train, y_train = smote.fit_resample(X_train, y_train)
+        if smote_targets:
+            print(f"[INFO] Applying SMOTE to minorities (Target: {target_count}): {list(smote_targets.keys())}")
+            try:
+                smote = SMOTE(
+                    sampling_strategy=smote_targets,
+                    random_state=42,
+                    k_neighbors=5,
+                    n_jobs=-1
+                )
+                X_train, y_train = smote.fit_resample(X_train, y_train)
+            except Exception as e:
+                print(f"[WARNING] SMOTE failed (likely due to very small class size): {e}")
+                print("[INFO] Continuing without SMOTE for this run.")
 
     # --------------------------------------------------
-    # 6️⃣ DISTRIBUTION CHECK & SAVE
+    # 6️⃣ SAVE & FINISH
     # --------------------------------------------------
     print("\n[FINAL TRAIN DISTRIBUTION]")
     print(pd.Series(y_train).value_counts().sort_index())
