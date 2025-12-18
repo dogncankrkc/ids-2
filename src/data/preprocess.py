@@ -1,7 +1,7 @@
 """
-Preprocessing Utilities for CIC-IoT-2023
-VERSION: ROBUST HYBRID (RobustScaler + Selective SMOTE + Benign Cap)
-Goal: Fix the 80% accuracy wall by handling outliers correctly.
+Preprocessing Utilities for CIC-IoT-2023 (ATTACK ONLY EDITION)
+VERSION: ROBUST HYBRID (RobustScaler + Selective SMOTE)
+Goal: Handle outliers and balance attack classes (e.g. Web vs DDoS).
 """
 
 import os
@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, RobustScaler # KRİTİK DEĞİŞİKLİK
+from sklearn.preprocessing import LabelEncoder, RobustScaler
 from imblearn.over_sampling import SMOTE
 
 # --------------------------------------------------
@@ -32,6 +32,13 @@ SAVE_DIR = "data/processed"
 ENCODER_PATH = f"{SAVE_DIR}/label_encoder.pkl"
 SCALER_PATH  = f"{SAVE_DIR}/feature_scaler.pkl"
 
+def _save_split(X, y, name):
+    df = pd.DataFrame(X, columns=SELECTED_FEATURES)
+    df["label"] = y
+    path = f"{SAVE_DIR}/{name}_preprocessed.csv"
+    df.to_csv(path, index=False)
+    print(f"[SAVED] {path}")
+
 def preprocess_multiclass(df: pd.DataFrame):
 
     print("[INFO] Multiclass preprocessing (ROBUST SCALER + SELECTIVE SMOTE)")
@@ -40,7 +47,10 @@ def preprocess_multiclass(df: pd.DataFrame):
 
     # 1️⃣ FEATURES & LABELS
     X = df[SELECTED_FEATURES].values
-    y = df["multiclass_label"].values
+    
+    # Label sütunu kontrolü
+    label_col = "multiclass_label" if "multiclass_label" in df.columns else "label"
+    y = df[label_col].values
 
     encoder = LabelEncoder()
     y_enc = encoder.fit_transform(y)
@@ -48,6 +58,10 @@ def preprocess_multiclass(df: pd.DataFrame):
 
     class_map = dict(zip(encoder.classes_, encoder.transform(encoder.classes_)))
     print("[INFO] Class mapping:", class_map)
+    
+    # KONTROL: Eğer yanlışlıkla Benign geldiyse uyaralım (ama işlem yapmayalım)
+    if 'Benign' in class_map:
+        print("[WARN] 'Benign' class detected in Attack-Only dataset! It will be treated as just another class.")
 
     # 2️⃣ STRATIFIED SPLIT
     # Train (%70), Val (%15), Test (%15)
@@ -59,34 +73,13 @@ def preprocess_multiclass(df: pd.DataFrame):
         X_temp, y_temp, test_size=0.50, stratify=y_temp, random_state=42
     )
 
-    # --------------------------------------------------
-    # 3️⃣ UNDERSAMPLE BENIGN (CRITICAL STEP)
-    # --------------------------------------------------
-    # Eğitim setinde Benign çok baskın olursa model saldırıları öğrenmez.
-    # Benign sayısını, en büyük saldırı sınıfının sayısına (veya makul bir sınıra) çekelim.
-    benign_id = class_map['Benign']
-    indices_benign = np.where(y_train == benign_id)[0]
-    indices_others = np.where(y_train != benign_id)[0]
-    
-    # Benign sayısını saldırıların ortalamasına yakın bir yere çek (örn: 100k)
-    # Çok da azaltmayalım ki Benign'i unutmasın.
-    TARGET_BENIGN = 100_000 
-    
-    if len(indices_benign) > TARGET_BENIGN:
-        print(f"[INFO] Capping Training Benign samples to {TARGET_BENIGN} (Avoid laziness)")
-        indices_benign = np.random.choice(indices_benign, TARGET_BENIGN, replace=False)
-        
-    indices_keep = np.concatenate([indices_others, indices_benign])
-    np.random.shuffle(indices_keep)
-    
-    X_train = X_train[indices_keep]
-    y_train = y_train[indices_keep]
+    # (3. ADIM - BENIGN CAPPING ÇIKARILDI)
 
     # --------------------------------------------------
-    # 4️⃣ ROBUST SCALING (FIT TRAIN ONLY) - KRİTİK!
+    # 4️⃣ ROBUST SCALING (FIT TRAIN ONLY)
     # --------------------------------------------------
-    # StandardScaler YERİNE RobustScaler kullanıyoruz.
-    # Bu, DDoS paketlerindeki devasa sayıların (Outlier) modeli bozmasını engeller.
+    # StandardScaler YERİNE RobustScaler.
+    # Bu, devasa DDoS paket boyutlarının (outlier) Web/Recon trafiğini ezmesini engeller.
     scaler = RobustScaler()
     X_train = scaler.fit_transform(X_train)
     X_val   = scaler.transform(X_val)
@@ -95,14 +88,15 @@ def preprocess_multiclass(df: pd.DataFrame):
     joblib.dump(scaler, SCALER_PATH)
 
     # --------------------------------------------------
-    # 5️⃣ SELECTIVE SMOTE (GPT'nin Fikri + Robust Scaler)
+    # 5️⃣ SELECTIVE SMOTE
     # --------------------------------------------------
+    # Saldırı sınıfları arasında dengesizlik varsa (örn. çok az Spoofing, çok fazla DoS)
+    # az olanları çoğaltır.
     unique, counts = np.unique(y_train, return_counts=True)
     class_counts = dict(zip(unique, counts))
     
-    # Hedef: En kalabalık sınıfın yarısı kadar olsun, daha fazlası gürültü yaratır.
     max_count = max(class_counts.values())
-    target_count = int(max_count * 0.5) 
+    target_count = int(max_count * 0.5) # En büyüğün yarısı kadar olsun en az.
 
     smote_targets = {}
     for cls, cnt in class_counts.items():
@@ -130,14 +124,6 @@ def preprocess_multiclass(df: pd.DataFrame):
     _save_split(X_test,  y_test,  "test")
 
     return X_train, X_val, X_test, y_train, y_val, y_test
-
-
-def _save_split(X, y, name):
-    df = pd.DataFrame(X, columns=SELECTED_FEATURES)
-    df["label"] = y
-    path = f"{SAVE_DIR}/{name}_preprocessed.csv"
-    df.to_csv(path, index=False)
-    print(f"[SAVED] {path}")
 
 def preprocess_single_sample(df_row: pd.DataFrame) -> torch.Tensor:
     if isinstance(df_row, pd.Series):

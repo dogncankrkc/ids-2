@@ -50,7 +50,7 @@ from src.data.preprocess import SELECTED_FEATURES
 # PATHS & CONSTANTS
 # ============================================================
 
-PROCESSED_DATA_PATH = "data/processed/CIC2023_CAPPED.csv"
+PROCESSED_DATA_PATH = "data/processed/CIC2023_ATTACK_ONLY.csv"
 TEST_DATA_SAVE_PATH = "data/processed/test_split_saved.csv"
 ENCODER_PATH = "data/processed/label_encoder.pkl"
 
