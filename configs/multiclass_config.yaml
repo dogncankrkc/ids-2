@@ -1,53 +1,44 @@
 # ============================================================
-# MULTICLASS CONFIG (6-CLASS MERGED - FINAL)
+# MULTICLASS CONFIG (NANO PLUS + FOCAL LOSS)
 # ============================================================
 
 model:
   type: "ids_resnet_nano" 
-  num_classes: 6          # ARTIK 6 SINIF VAR
+  num_classes: 6          
   input_dim: 39
-  dropout: 0.1 
+  dropout: 0.15 # Kapasite arttığı için dropout'u çok hafif artırdık
 
 data:
-  # 6 Class için oluşturacağın dosya yolu
   processed_data_path: "data/processed/CIC2023_ATTACK_ONLY_6CLASS.csv"
   batch_size: 256 
   num_workers: 0
 
 preprocess:
-  # Log1p kapalı (Saf veri daha iyi performans verdi)
   log1p_features: [] 
-  
-  # SMOTE AÇIK: Çünkü DoS-DDoS birleşince 100k+ olacak.
-  # Web/BruteForce'un ezilmemesi için onları da 100k'ya çıkaracağız.
   use_smote: true 
-  
-  # Bu parametre train.py'den gönderildiği için config'de durmalı
-  # ama preprocess.py bunu yok sayıp "Max Count" kullanacak.
   smote_target_ratio: 1.0 
 
 training:
   epochs: 60
   learning_rate: 0.001 
   
+  # Weight decay'i biraz serbest bıraktık, Focal Loss halledecek.
   weight_decay: 0.00001 
   optimizer: "adamw"
 
-  # Standart CrossEntropy
+  # --- KRİTİK DEĞİŞİKLİK ---
+  # Focal Loss: Kolayları (DoS) geç, zorlara (Web) odaklan.
   loss:
-    type: "cross_entropy" 
-    label_smoothing: 0.05 
+    type: "focal" 
+    gamma: 2.5 # Zor örneklere çok sert odaklansın
 
-  # Scheduler Ayarları
   scheduler: "plateau"
-  scheduler_patience: 5   
+  scheduler_patience: 4   
   scheduler_factor: 0.5   
-  
   early_stopping_patience: 15
 
 checkpoint:
-  # Karışıklığı önlemek için yeni klasör
-  save_dir: "models/checkpoints/ids_multiclass_resnet_nano_6class_merged"
+  save_dir: "models/checkpoints/ids_multiclass_resnet_nanoplus_focal"
 
 logging:
   verbose: true

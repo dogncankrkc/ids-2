@@ -46,6 +46,29 @@ from src.utils.visualization import plot_training_history, plot_confusion_matrix
 # Preprocess dosyasından özellik listesini alıyoruz
 from src.data.preprocess import SELECTED_FEATURES
 
+import torch.nn.functional as F
+# train.py (veya ana scriptin) EN TEPESİNE, importların altına ekle:
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha 
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        # Cross Entropy Loss (log_softmax + nll_loss)
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none', weight=self.alpha)
+        pt = torch.exp(-ce_loss) # Probability of true class
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+        
 # ============================================================
 # PATHS & CONSTANTS
 # ============================================================
@@ -286,8 +309,15 @@ def main():
     class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
     print(f"[INFO] Class Weights: {class_weights.cpu().numpy()}")
 
+    loss_type = config.get("training", {}).get("loss", {}).get("type", "cross_entropy")
     # Label Smoothing ile Loss
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
+    if loss_type == "focal":
+        print(f"[INFO] Using Focal Loss (gamma={config['training']['loss'].get('gamma', 2.0)})")
+        # Focal Loss sınıfını yukarıda tanımlamıştık
+        criterion = FocalLoss(alpha=class_weights, gamma=config['training']['loss'].get('gamma', 2.0))
+    else:
+        print("[INFO] Using CrossEntropy Loss")
+        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
 
     optimizer = get_optimizer(
         model=model,
