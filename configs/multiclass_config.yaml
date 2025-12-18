@@ -1,38 +1,42 @@
 # ============================================================
-# MULTICLASS CONFIG (RESNET1D NANO - 7 CLASSES)
+# MULTICLASS CONFIG (RESNET1D TURBO - 7 CLASSES)
 # ============================================================
 
 model:
-  type: "ids_resnet_nano" # Factory'deki isimle uyumlu
-  num_classes: 7          # ÖNEMLİ: benign kaldırıldı
+  type: "ids_resnet_turbo" # İsim güncellendi (Loglarda karışmasın diye)
+  num_classes: 7
   input_dim: 39
 
 data:
-  # ResNet batch sever. 128 veya 256 uygundur.
-  batch_size: 256 
+  batch_size: 256
   num_workers: 0
 
 training:
   epochs: 60
   
-  # ResNet, GRU gibi nazlı değildir. 0.001 ile hızlı ve güçlü başlar.
+  # Turbo model daha büyük olduğu için LR 0.001 iyidir.
   learning_rate: 0.001 
   
-  # Parametre sayımız çok azaldığı (30k) için weight_decay'i biraz kıstık.
-  # Modelin kapasitesi zaten sınırlı, fazla baskılamaya gerek yok.
-  weight_decay: 0.0001
+  weight_decay: 0.0005
   
   optimizer: "adamw"
 
   scheduler: "plateau"
-  scheduler_patience: 3   # 3 epoch gelişmezse müdahale et
-  scheduler_factor: 0.5   # LR'yi yarıya indir
+  
+  # --- KRİTİK DEĞİŞİKLİKLER ---
+  # Eskiden: 3 epoch iyileşmezse düşür.
+  # Şimdi: 7 epoch sabret. (Modelin loss platosunda gezinmesine izin ver)
+  scheduler_patience: 7   
+  
+  # Eskiden: Yarıya (0.5) indir.
+  # Şimdi: %70'ine (0.7) indir. (Daha yumuşak fren yap)
+  scheduler_factor: 0.7   
   
   early_stopping_patience: 15
 
 checkpoint:
-  # Klasör ismini modelle uyumlu yapalım karışmasın
-  save_dir: "models/checkpoints/ids_multiclass_resnet_nano_7class_gan_balanced"
+  # Klasör ismi değişti: TURBO
+  save_dir: "models/checkpoints/ids_multiclass_resnet_turbo_7class_gan_balanced"
 
 logging:
   verbose: true

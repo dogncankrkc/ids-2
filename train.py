@@ -50,7 +50,7 @@ from src.data.preprocess import SELECTED_FEATURES
 # PATHS & CONSTANTS
 # ============================================================
 
-PROCESSED_DATA_PATH = "data/processed/CIC2023_BALANCED_100K.csv"
+PROCESSED_DATA_PATH = "data/processed/CIC2023_SEPARATE_ATTACK_ONLY.csv"
 TEST_DATA_SAVE_PATH = "data/processed/test_split_saved.csv"
 ENCODER_PATH = "data/processed/label_encoder.pkl"
 
@@ -287,8 +287,7 @@ def main():
     print(f"[INFO] Class Weights: {class_weights.cpu().numpy()}")
 
     # Label Smoothing ile Loss
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
-
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = get_optimizer(
         model=model,
         optimizer_name=config["training"]["optimizer"],

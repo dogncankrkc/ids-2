@@ -1,7 +1,7 @@
 """
-Preprocessing Utilities for CIC-IoT-2023 (BALANCED EDITION)
-VERSION: CLEAN ROBUST (RobustScaler Only)
-Goal: Prepare balanced data for training (Split + Scale). No SMOTE needed.
+Preprocessing Utilities for CIC-IoT-2023 (ACADEMIC STANDARD)
+VERSION: SPLIT FIRST -> AUGMENT TRAIN
+Goal: Keep Test/Val pure (Real data only). Augment ONLY Train set with GAN.
 """
 
 import os
@@ -14,7 +14,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, RobustScaler
 
 # --------------------------------------------------
-# FEATURES
+# CONFIG & PATHS
 # --------------------------------------------------
 SELECTED_FEATURES = [
     'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate',
@@ -31,6 +31,9 @@ SAVE_DIR = "data/processed"
 ENCODER_PATH = f"{SAVE_DIR}/label_encoder.pkl"
 SCALER_PATH  = f"{SAVE_DIR}/feature_scaler.pkl"
 
+# GAN Dosyasının Yeri (Bunu kodun bulabilmesi lazım)
+GAN_DATA_PATH = "data/processed/GAN_SYNTHETIC_ONLY.csv"
+
 def _save_split(X, y, name):
     df = pd.DataFrame(X, columns=SELECTED_FEATURES)
     df["label"] = y
@@ -38,18 +41,18 @@ def _save_split(X, y, name):
     df.to_csv(path, index=False)
     print(f"[SAVED] {path}")
 
-def preprocess_multiclass(df: pd.DataFrame):
-
-    print("[INFO] Multiclass preprocessing (ROBUST SCALER ONLY)")
-
+def preprocess_multiclass(df_real: pd.DataFrame):
+    """
+    df_real: Sadece gerçek veriyi (CIC2023_SEPARATE_ATTACK_ONLY.csv) alır.
+    """
+    print("[INFO] Multiclass preprocessing (SPLIT FIRST -> AUGMENT TRAIN)")
     os.makedirs(SAVE_DIR, exist_ok=True)
 
-    # 1️⃣ FEATURES & LABELS
-    X = df[SELECTED_FEATURES].values
+    # 1️⃣ FEATURES & LABELS (GERÇEK VERİ)
+    X = df_real[SELECTED_FEATURES].values
     
-    # Label sütunu kontrolü
-    label_col = "multiclass_label" if "multiclass_label" in df.columns else "label"
-    y = df[label_col].values
+    label_col = "multiclass_label" if "multiclass_label" in df_real.columns else "label"
+    y = df_real[label_col].values
 
     # Label Encoding
     encoder = LabelEncoder()
@@ -59,29 +62,92 @@ def preprocess_multiclass(df: pd.DataFrame):
     class_map = dict(zip(encoder.classes_, encoder.transform(encoder.classes_)))
     print("[INFO] Class mapping:", class_map)
 
-    # 2️⃣ STRATIFIED SPLIT
-    # Train (%70), Val (%15), Test (%15)
-    # stratify=y_enc -> Sınıf oranlarını koruyarak böler
+    # 2️⃣ STRATIFIED SPLIT (ÖNCE BÖLÜYORUZ - SAF VERİ)
+    print("[INFO] Splitting Real Data (Train: %70, Val: %15, Test: %15)...")
+    
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y_enc, test_size=0.30, stratify=y_enc, random_state=42
     )
-
     X_val, X_test, y_val, y_test = train_test_split(
         X_temp, y_temp, test_size=0.50, stratify=y_temp, random_state=42
     )
 
-    # 3️⃣ ROBUST SCALING
-    # RobustScaler, DDoS gibi ataklardaki uç değerleri (outliers) yönetmek için harikadır.
+    # 3️⃣ GAN AUGMENTATION (SADECE TRAIN İÇİN)
+    if os.path.exists(GAN_DATA_PATH):
+        print(f"[INFO] Loading GAN data for training augmentation: {GAN_DATA_PATH}")
+        df_gan = pd.read_csv(GAN_DATA_PATH)
+        
+        # GAN verisini de aynı formata getir
+        X_gan = df_gan[SELECTED_FEATURES].values
+        y_gan_raw = df_gan[label_col].values
+        
+        # GAN etiketlerini encode et
+        y_gan = encoder.transform(y_gan_raw)
+
+        # Hangi sınıfları ekleyeceğiz? (Web ve BruteForce)
+        # Train setindeki en kalabalık sınıfın sayısını hedefliyoruz
+        unique, counts = np.unique(y_train, return_counts=True)
+        max_train_count = max(counts) # Muhtemelen DDoS (yaklaşık 70k olacak)
+        
+        print(f"[INFO] Target Train Size per Class: {max_train_count}")
+        
+        X_gan_to_add = []
+        y_gan_to_add = []
+
+        # Her sınıf için kontrol et
+        for cls_idx in unique:
+            cls_name = encoder.inverse_transform([cls_idx])[0]
+            current_count = counts[np.where(unique == cls_idx)[0][0]]
+            
+            if current_count < max_train_count:
+                needed = max_train_count - current_count
+                
+                # Bu sınıfa ait GAN verilerini bul
+                indices = np.where(y_gan == cls_idx)[0]
+                
+                if len(indices) > 0:
+                    # Yeterince GAN verisi var mı? Varsa seç, yoksa tekrarla (replace=True)
+                    selected_indices = np.random.choice(indices, needed, replace=True)
+                    
+                    X_gan_to_add.append(X_gan[selected_indices])
+                    y_gan_to_add.append(y_gan[selected_indices])
+                    
+                    print(f"   -> Augmenting {cls_name}: +{needed} GAN samples added to TRAIN.")
+        
+        if X_gan_to_add:
+            # Listeleri birleştir
+            X_gan_add = np.vstack(X_gan_to_add)
+            y_gan_add = np.concatenate(y_gan_to_add)
+            
+            # Train setine ekle
+            X_train = np.vstack([X_train, X_gan_add])
+            y_train = np.concatenate([y_train, y_gan_add])
+            
+            # Karıştır (Shuffle) - Çok önemli!
+            perm = np.random.permutation(len(X_train))
+            X_train = X_train[perm]
+            y_train = y_train[perm]
+            
+            print("[INFO] GAN augmentation applied to TRAIN set successfully.")
+    else:
+        print("[WARN] GAN data file not found! Training will proceed with imbalanced real data.")
+
+    # 4️⃣ ROBUST SCALING
+    # Fit'i SADECE Augmented Train üzerinde yapıyoruz
     scaler = RobustScaler()
     X_train = scaler.fit_transform(X_train)
+    # Val ve Test'i dönüştürüyoruz (Data Leakage yok)
     X_val   = scaler.transform(X_val)
     X_test  = scaler.transform(X_test)
 
     joblib.dump(scaler, SCALER_PATH)
 
-    # 4️⃣ DISTRIBUTION CHECK & SAVE
-    print("\n[FINAL TRAIN DISTRIBUTION]")
+    # 5️⃣ SAVE & RETURN
+    print("\n[FINAL TRAIN DISTRIBUTION (Augmented)]")
     print(pd.Series(y_train).value_counts().sort_index())
+    
+    print("\n[FINAL TEST DISTRIBUTION (Pure Real)]")
+    print(pd.Series(y_test).value_counts().sort_index())
     
     _save_split(X_train, y_train, "train")
     _save_split(X_val,   y_val,   "val")
@@ -90,19 +156,14 @@ def preprocess_multiclass(df: pd.DataFrame):
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 def preprocess_single_sample(df_row: pd.DataFrame) -> torch.Tensor:
-    # Inference (Tahmin) sırasında tekil veriyi işlemek için kullanılır
     if isinstance(df_row, pd.Series):
         df_row = df_row.to_frame().T
-    
-    # Eksik sütun tamamlama
     for col in SELECTED_FEATURES:
         if col not in df_row.columns:
             df_row[col] = 0.0
-            
     df_row.replace([np.inf, -np.inf], 0, inplace=True)
     df_row.fillna(0, inplace=True)
 
-    # Kaydedilen scaler'ı yükle ve dönüştür
     scaler = joblib.load(SCALER_PATH)
     x = scaler.transform(df_row[SELECTED_FEATURES].values)
 
