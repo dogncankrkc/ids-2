@@ -1,11 +1,11 @@
 """
 FINAL DATASET CREATOR – CIC-IoT-2023 (CAPPED, CLEAN)
 
-Görevi:
-1. Dev boyuttaki ham veriyi parça parça okur.
-2. Etiketleri sadeleştirir (Map to 8 classes).
-3. Belirlenen sayılarda (Cap) veriyi alıp 'data/processed' klasörüne kaydeder.
-4. SMOTE veya Scaler BURADA YAPILMAZ (Onlar preprocess.py işi).
+Purpose:
+1. Read huge raw CSV in chunks
+2. Map raw labels to 8 IDS classes
+3. Cap dataset size (NO resampling, NO scaling here)
+4. Save clean capped dataset for preprocess.py
 """
 
 import os
@@ -21,10 +21,9 @@ OUTPUT_PATH = "data/processed/CIC2023_CAPPED.csv"
 
 CHUNK_SIZE = 1_000_000
 
-# Strateji: Benign'i makul seviyede tut, Atakları maksimum al.
-# preprocess.py aşamasında Benign daha da azaltılacak (Undersample).
-BENIGN_CAP = 250_000  
-ATTACK_CAP = 100_000  # Varsa hepsini al, yoksa 100k'da dur.
+# Keep Benign realistic but manageable
+BENIGN_CAP = 250_000
+ATTACK_CAP = 100_000
 
 # ------------------------------------------------------------
 # SELECTED FEATURES
@@ -46,98 +45,75 @@ SELECTED_FEATURES = [
 def map_to_multiclass(label: str) -> str:
     label = str(label).strip().upper()
 
-    if label == 'NAN' or label == '': return 'Other'
-    if 'BENIGN' in label: return 'Benign'
-    if 'DDOS' in label: return 'DDoS'
-    if 'DOS' in label: return 'DoS'
-    if any(x in label for x in ['RECON', 'VULNERABILITY', 'PING', 'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']): return 'Recon'
-    if any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER', 'COMMAND', 'BACKDOOR', 'MALWARE']): return 'Web'
-    if 'BRUTEFORCE' in label or 'DICTIONARY' in label: return 'BruteForce'
-    if 'SPOOFING' in label or 'MITM' in label: return 'Spoofing'
-    if 'MIRAI' in label: return 'Mirai'
+    if label == 'NAN' or label == '':
+        return 'Other'
+    if 'BENIGN' in label:
+        return 'Benign'
+    if 'DDOS' in label:
+        return 'DDoS'
+    if 'DOS' in label:
+        return 'DoS'
+    if any(x in label for x in ['RECON', 'VULNERABILITY', 'PING', 'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']):
+        return 'Recon'
+    if any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER', 'COMMAND', 'BACKDOOR', 'MALWARE']):
+        return 'Web'
+    if 'BRUTEFORCE' in label or 'DICTIONARY' in label:
+        return 'BruteForce'
+    if 'SPOOFING' in label or 'MITM' in label:
+        return 'Spoofing'
+    if 'MIRAI' in label:
+        return 'Mirai'
     return 'Other'
 
 # ============================
-# MAIN GENERATOR
+# MAIN
 # ============================
 def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
-    # Sayaçlar
     collected = {
         'Benign': 0, 'DDoS': 0, 'DoS': 0, 'Recon': 0,
         'Web': 0, 'BruteForce': 0, 'Spoofing': 0, 'Mirai': 0
     }
-    
-    chunks_to_save = [] # Verileri burada toplayacağız
 
-    print(f"[INFO] Dataset Creation Started. Caps -> Benign: {BENIGN_CAP}, Attack: {ATTACK_CAP}")
+    chunks_to_save = []
 
-    # CSV'yi parça parça oku
+    print(f"[INFO] Creating capped dataset...")
+
     for i, chunk in enumerate(pd.read_csv(INPUT_PATH, chunksize=CHUNK_SIZE)):
-        print(f" -> Processing Chunk {i+1}...", end="\r")
+        print(f" -> Processing chunk {i+1}", end="\r")
 
-        # 1. Etiket Sütununu Bul
-        if "multiclass_label" in chunk.columns:
-            label_col = "multiclass_label"
-        elif "label" in chunk.columns:
-            label_col = "label"
-        else:
-            continue # Etiket yoksa bu parçayı geç
-
-        # 2. Etiketleri Dönüştür (Mapping)
+        label_col = "multiclass_label" if "multiclass_label" in chunk.columns else "label"
         chunk["multiclass_label"] = chunk[label_col].apply(map_to_multiclass)
 
-        # 3. 'Other' olanları at
         chunk = chunk[chunk["multiclass_label"] != "Other"]
-
-        # 4. Özellikleri Seç ve Temizle
-        # Sadece seçili featureları al
         chunk = chunk[SELECTED_FEATURES + ["multiclass_label"]]
-        
-        # Sonsuz sayıları (inf) temizle
+
         chunk.replace([np.inf, -np.inf], np.nan, inplace=True)
         chunk.dropna(inplace=True)
 
-        # 5. Capping (Limit koyma)
         for cls, group in chunk.groupby("multiclass_label"):
-            target_cap = BENIGN_CAP if cls == "Benign" else ATTACK_CAP
-            
-            current_count = collected.get(cls, 0)
-            if current_count >= target_cap:
-                continue # Bu sınıf dolduysa alma
+            cap = BENIGN_CAP if cls == "Benign" else ATTACK_CAP
+            remaining = cap - collected[cls]
+            if remaining <= 0:
+                continue
 
-            needed = target_cap - current_count
-            
-            # İhtiyaç kadarını al
-            take = group.head(needed) # veya .sample(n=min(len(group), needed))
-            
+            take = group.head(remaining)
             chunks_to_save.append(take)
             collected[cls] += len(take)
 
-        # 6. Erken Durdurma (Her şey dolduysa boşuna okuma)
-        if all(val >= (BENIGN_CAP if key == "Benign" else ATTACK_CAP) for key, val in collected.items()):
-            print(f"\n[INFO] All caps reached at chunk {i+1}. Stopping.")
+        if all(collected[k] >= (BENIGN_CAP if k == "Benign" else ATTACK_CAP) for k in collected):
+            print("\n[INFO] Caps reached. Stopping early.")
             break
 
-    # ============================
-    # SAVE
-    # ============================
-    print("\n[INFO] Concatenating and saving...")
-    if not chunks_to_save:
-        print("[ERROR] No data collected!")
-        return
-
     df_final = pd.concat(chunks_to_save, ignore_index=True)
-    
-    # Karıştır
     df_final = df_final.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    print("\n[FINAL DISTRIBUTION]")
+    print("\n[FINAL CLASS DISTRIBUTION]")
     print(df_final["multiclass_label"].value_counts())
 
     df_final.to_csv(OUTPUT_PATH, index=False)
-    print(f"\n[SUCCESS] Dataset saved to: {OUTPUT_PATH}")
+    print(f"\n[SAVED] {OUTPUT_PATH}")
 
 if __name__ == "__main__":
     main()

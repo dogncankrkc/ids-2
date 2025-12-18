@@ -1,12 +1,7 @@
 """
-Preprocessing Utilities for CIC-IoT-2023 Dataset.
-FINAL BALANCED VERSION (Undersample Benign + SMOTE Minority)
-
-✔ Train / Val / Test split FIRST
-✔ Undersample BENIGN only in TRAIN (to match Attack Count)
-✔ SMOTE Minority only in TRAIN
-✔ StandardScaler fit ONLY on TRAIN
-✔ Saves preprocessed splits
+Preprocessing Utilities for CIC-IoT-2023
+VERSION: ROBUST HYBRID (RobustScaler + Selective SMOTE + Benign Cap)
+Goal: Fix the 80% accuracy wall by handling outliers correctly.
 """
 
 import os
@@ -16,7 +11,7 @@ import pandas as pd
 import torch
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, RobustScaler # KRİTİK DEĞİŞİKLİK
 from imblearn.over_sampling import SMOTE
 
 # --------------------------------------------------
@@ -33,21 +28,13 @@ SELECTED_FEATURES = [
     'IAT', 'Number', 'Variance'
 ]
 
-# Hedeflenen sınıf başı örnek sayısı (Eğitim için)
-# Saldırı sınıfların (DDoS, Mirai vs.) ortalama 70k civarında, hepsini buna eşitleyeceğiz.
-TARGET_SAMPLES_PER_CLASS = 70_000 
-
 SAVE_DIR = "data/processed"
 ENCODER_PATH = f"{SAVE_DIR}/label_encoder.pkl"
 SCALER_PATH  = f"{SAVE_DIR}/feature_scaler.pkl"
 
-
-# --------------------------------------------------
-# MULTICLASS PREPROCESS
-# --------------------------------------------------
 def preprocess_multiclass(df: pd.DataFrame):
 
-    print("[INFO] Multiclass preprocessing (UNDERSAMPLE BENIGN + SMOTE)")
+    print("[INFO] Multiclass preprocessing (ROBUST SCALER + SELECTIVE SMOTE)")
 
     os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -62,8 +49,8 @@ def preprocess_multiclass(df: pd.DataFrame):
     class_map = dict(zip(encoder.classes_, encoder.transform(encoder.classes_)))
     print("[INFO] Class mapping:", class_map)
 
-    # 2️⃣ SPLIT (STRATIFIED)
-    # Önce Test/Val ayıralım ki gerçek dünya verisine dokunmayalım
+    # 2️⃣ STRATIFIED SPLIT
+    # Train (%70), Val (%15), Test (%15)
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y_enc, test_size=0.30, stratify=y_enc, random_state=42
     )
@@ -71,26 +58,24 @@ def preprocess_multiclass(df: pd.DataFrame):
     X_val, X_test, y_val, y_test = train_test_split(
         X_temp, y_temp, test_size=0.50, stratify=y_temp, random_state=42
     )
-    
+
     # --------------------------------------------------
-    # 3️⃣ UNDERSAMPLING BENIGN (ONLY TRAIN) - YENİ KISIM
+    # 3️⃣ UNDERSAMPLE BENIGN (CRITICAL STEP)
     # --------------------------------------------------
-    print(f"[INFO] Balancing Train Set... (Target: {TARGET_SAMPLES_PER_CLASS} per class)")
-    
+    # Eğitim setinde Benign çok baskın olursa model saldırıları öğrenmez.
+    # Benign sayısını, en büyük saldırı sınıfının sayısına (veya makul bir sınıra) çekelim.
     benign_id = class_map['Benign']
-    
-    # Train setindeki Benign indekslerini bul
     indices_benign = np.where(y_train == benign_id)[0]
     indices_others = np.where(y_train != benign_id)[0]
     
-    # Benign sayısı çoksa rastgele azalt (Undersample)
-    if len(indices_benign) > TARGET_SAMPLES_PER_CLASS:
-        indices_benign = np.random.choice(
-            indices_benign, TARGET_SAMPLES_PER_CLASS, replace=False
-        )
-        print(f"[INFO] Benign undersampled to {TARGET_SAMPLES_PER_CLASS}")
+    # Benign sayısını saldırıların ortalamasına yakın bir yere çek (örn: 100k)
+    # Çok da azaltmayalım ki Benign'i unutmasın.
+    TARGET_BENIGN = 100_000 
     
-    # İndeksleri birleştir ve karıştır
+    if len(indices_benign) > TARGET_BENIGN:
+        print(f"[INFO] Capping Training Benign samples to {TARGET_BENIGN} (Avoid laziness)")
+        indices_benign = np.random.choice(indices_benign, TARGET_BENIGN, replace=False)
+        
     indices_keep = np.concatenate([indices_others, indices_benign])
     np.random.shuffle(indices_keep)
     
@@ -98,9 +83,11 @@ def preprocess_multiclass(df: pd.DataFrame):
     y_train = y_train[indices_keep]
 
     # --------------------------------------------------
-    # 4️⃣ SCALE (FIT TRAIN ONLY)
+    # 4️⃣ ROBUST SCALING (FIT TRAIN ONLY) - KRİTİK!
     # --------------------------------------------------
-    scaler = StandardScaler()
+    # StandardScaler YERİNE RobustScaler kullanıyoruz.
+    # Bu, DDoS paketlerindeki devasa sayıların (Outlier) modeli bozmasını engeller.
+    scaler = RobustScaler()
     X_train = scaler.fit_transform(X_train)
     X_val   = scaler.transform(X_val)
     X_test  = scaler.transform(X_test)
@@ -108,21 +95,22 @@ def preprocess_multiclass(df: pd.DataFrame):
     joblib.dump(scaler, SCALER_PATH)
 
     # --------------------------------------------------
-    # 5️⃣ SMOTE FOR MINORITY (ONLY TRAIN)
+    # 5️⃣ SELECTIVE SMOTE (GPT'nin Fikri + Robust Scaler)
     # --------------------------------------------------
-    # Artık hedefimiz sabit: TARGET_SAMPLES_PER_CLASS (70k)
-    smote_targets = {}
-    
-    # Mevcut sayılara bak, 70k'dan az olanları 70k'ya tamamla
     unique, counts = np.unique(y_train, return_counts=True)
-    current_counts = dict(zip(unique, counts))
+    class_counts = dict(zip(unique, counts))
     
-    for cls_id, count in current_counts.items():
-        if count < TARGET_SAMPLES_PER_CLASS:
-            smote_targets[cls_id] = TARGET_SAMPLES_PER_CLASS
-            
+    # Hedef: En kalabalık sınıfın yarısı kadar olsun, daha fazlası gürültü yaratır.
+    max_count = max(class_counts.values())
+    target_count = int(max_count * 0.5) 
+
+    smote_targets = {}
+    for cls, cnt in class_counts.items():
+        if cnt < target_count:
+            smote_targets[cls] = target_count
+
     if smote_targets:
-        print(f"[INFO] Applying SMOTE to classes: {smote_targets.keys()}")
+        print(f"[INFO] Applying SMOTE to minorities (Target: {target_count}): {list(smote_targets.keys())}")
         smote = SMOTE(
             sampling_strategy=smote_targets,
             random_state=42,
@@ -132,17 +120,11 @@ def preprocess_multiclass(df: pd.DataFrame):
         X_train, y_train = smote.fit_resample(X_train, y_train)
 
     # --------------------------------------------------
-    # 6️⃣ DISTRIBUTION CHECK
+    # 6️⃣ DISTRIBUTION CHECK & SAVE
     # --------------------------------------------------
-    print("\n[FINAL TRAIN DISTRIBUTION - BALANCED]")
+    print("\n[FINAL TRAIN DISTRIBUTION]")
     print(pd.Series(y_train).value_counts().sort_index())
     
-    print("\n[TEST DISTRIBUTION - REALISTIC]")
-    print(pd.Series(y_test).value_counts().sort_index())
-
-    # --------------------------------------------------
-    # 7️⃣ SAVE SPLITS
-    # --------------------------------------------------
     _save_split(X_train, y_train, "train")
     _save_split(X_val,   y_val,   "val")
     _save_split(X_test,  y_test,  "test")
@@ -157,28 +139,16 @@ def _save_split(X, y, name):
     df.to_csv(path, index=False)
     print(f"[SAVED] {path}")
 
-
-# --------------------------------------------------
-# SINGLE SAMPLE (INFERENCE)
-# --------------------------------------------------
 def preprocess_single_sample(df_row: pd.DataFrame) -> torch.Tensor:
-
     if isinstance(df_row, pd.Series):
         df_row = df_row.to_frame().T
-
     for col in SELECTED_FEATURES:
         if col not in df_row.columns:
             df_row[col] = 0.0
-
     df_row.replace([np.inf, -np.inf], 0, inplace=True)
     df_row.fillna(0, inplace=True)
 
     scaler = joblib.load(SCALER_PATH)
     x = scaler.transform(df_row[SELECTED_FEATURES].values)
 
-    # ResNet-MLP için (1, 39) yeterli, ama model kodumuz 
-    # 3D gelirse (1, 1, 39) otomatik düzeltiyor.
-    # Uyumluluk için eski formatı koruyorum:
-    x = torch.tensor(x, dtype=torch.float32).unsqueeze(1)
-
-    return x
+    return torch.tensor(x, dtype=torch.float32).unsqueeze(1)
