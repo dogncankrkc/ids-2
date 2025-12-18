@@ -1,28 +1,38 @@
+# ============================================================
+# MULTICLASS CONFIG (RESNET1D NANO - 7 CLASSES)
+# ============================================================
+
 model:
-  type: "ids_gru" # İsim loglarda görünsün
-  num_classes: 8
+  type: "ids_resnet_nano" # Factory'deki isimle uyumlu
+  num_classes: 7          # ÖNEMLİ: DoS ve DDoS birleştiği için 7 oldu
   input_dim: 39
 
 data:
-  batch_size: 256 # GRU 256 ile daha mutlu olur (Gradientler ortalanır)
+  # ResNet batch sever. 128 veya 256 uygundur.
+  batch_size: 256 
   num_workers: 0
 
 training:
-  epochs: 50
+  epochs: 60
   
-  learning_rate: 0.0003  # DÜŞÜRDÜK: 0.001 çok agresif geldi, zikzak yaptı.
+  # ResNet, GRU gibi nazlı değildir. 0.001 ile hızlı ve güçlü başlar.
+  learning_rate: 0.001 
+  
+  # Parametre sayımız çok azaldığı (30k) için weight_decay'i biraz kıstık.
+  # Modelin kapasitesi zaten sınırlı, fazla baskılamaya gerek yok.
   weight_decay: 0.0001
   
   optimizer: "adamw"
 
   scheduler: "plateau"
-  scheduler_patience: 3
-  scheduler_factor: 0.5
+  scheduler_patience: 3   # 3 epoch gelişmezse müdahale et
+  scheduler_factor: 0.5   # LR'yi yarıya indir
   
-  early_stopping_patience: 10
+  early_stopping_patience: 15
 
 checkpoint:
-  save_dir: "models/checkpoints/ids_multiclass_gru_final"
+  # Klasör ismini modelle uyumlu yapalım karışmasın
+  save_dir: "models/checkpoints/ids_multiclass_resnet_nano_7class"
 
 logging:
   verbose: true
