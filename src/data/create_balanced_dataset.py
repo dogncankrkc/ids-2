@@ -1,27 +1,19 @@
 """
-ATTACK-ONLY DATASET CREATOR – CIC-IoT-2023 (HIERARCHICAL STAGE 2)
-
-Purpose:
-1. Filter out BENIGN traffic completely.
-2. Keep DoS and DDoS separate (7 Attack Classes).
-3. Create a clean dataset for the 'Specialist' Attack Classifier.
+ATTACK-ONLY DATASET CREATOR – ELITE EDITION
+Changes: 
+- Cap increased to 100k.
+- Random sampling used instead of head().
 """
-
 import os
 import numpy as np
 import pandas as pd
 
-# ============================
-# CONFIGURATION
-# ============================
-
 INPUT_PATH = "data/raw/CIC2023_FULL_MERGED.csv"
 OUTPUT_PATH = "data/processed/CIC2023_ATTACK_ONLY.csv"
-
 CHUNK_SIZE = 1_000_000
 
-# Saldırıları bol bol alalım, Benign olmadığı için yerimiz var.
-ATTACK_CAP = 75_000 
+# KARAR 1: Veri miktarını artırdık.
+ATTACK_CAP = 100_000 
 
 SELECTED_FEATURES = [
     'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate',
@@ -34,23 +26,14 @@ SELECTED_FEATURES = [
     'IAT', 'Number', 'Variance'
 ]
 
-# ============================
-# LABEL MAPPING (NO MERGING, NO BENIGN)
-# ============================
 def map_to_attack_class(label: str) -> str:
     label = str(label).strip().upper()
-
     if label == 'NAN' or label == '': return 'Ignore'
+    if 'BENIGN' in label: return 'Ignore'
     
-    # Benign'i GÖRMEZDEN GEL (Ignore)
-    if 'BENIGN' in label:
-        return 'Ignore'
-    
-    # DoS ve DDoS AYRI
     if 'DDOS' in label: return 'DDoS'
     if 'DOS' in label: return 'DoS'
     
-    # Diğerleri
     if any(x in label for x in ['RECON', 'VULNERABILITY', 'PING', 'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']): return 'Recon'
     if any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER', 'COMMAND', 'BACKDOOR', 'MALWARE']): return 'Web'
     if 'BRUTEFORCE' in label or 'DICTIONARY' in label: return 'BruteForce'
@@ -61,16 +44,10 @@ def map_to_attack_class(label: str) -> str:
 
 def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-
-    collected = {
-        'DDoS': 0, 'DoS': 0, 'Recon': 0, 'Web': 0, 
-        'BruteForce': 0, 'Spoofing': 0, 'Mirai': 0
-    }
-    
+    collected = {'DDoS': 0, 'DoS': 0, 'Recon': 0, 'Web': 0, 'BruteForce': 0, 'Spoofing': 0, 'Mirai': 0}
     chunks_to_save = []
 
-    print(f"[INFO] Creating ATTACK-ONLY dataset (No Benign)...")
-    print(f"[INFO] Target Cap per Attack: {ATTACK_CAP}")
+    print(f"[INFO] Creating ATTACK-ONLY dataset (100k Cap + Random Sampling)...")
 
     for i, chunk in enumerate(pd.read_csv(INPUT_PATH, chunksize=CHUNK_SIZE)):
         print(f" -> Processing chunk {i+1}", end="\r")
@@ -80,8 +57,6 @@ def main():
         else: continue
 
         chunk["multiclass_label"] = chunk[label_col].apply(map_to_attack_class)
-
-        # 'Ignore' olanları (Benign ve Tanımsız) at
         chunk = chunk[chunk["multiclass_label"] != "Ignore"]
         chunk = chunk[SELECTED_FEATURES + ["multiclass_label"]]
         
@@ -92,7 +67,14 @@ def main():
             if collected[cls] >= ATTACK_CAP: continue
             
             needed = ATTACK_CAP - collected[cls]
-            take = group.head(needed)
+            
+            # KARAR 2: Random Sample Kullanımı
+            # Eğer gruptaki veri ihtiyacımızdan azsa hepsini al, çoksa rastgele seç.
+            if len(group) > needed:
+                take = group.sample(n=needed, random_state=42)
+            else:
+                take = group
+                
             chunks_to_save.append(take)
             collected[cls] += len(take)
 
@@ -109,7 +91,6 @@ def main():
 
     print("\n[FINAL ATTACK DISTRIBUTION]")
     print(df_final["multiclass_label"].value_counts())
-
     df_final.to_csv(OUTPUT_PATH, index=False)
     print(f"\n[SUCCESS] Saved to: {OUTPUT_PATH}")
 

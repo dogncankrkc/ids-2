@@ -1,39 +1,42 @@
 # ============================================================
-# ATTACK-ONLY CONFIG (RESNET MID - 7 CLASSES)
+# ATTACK-ONLY CONFIG (SE-RESNET ELITE - 7 CLASSES)
 # ============================================================
-# Bu modelde BENIGN yoktur. Sadece saldırı türlerini ayırır.
+# Hedef: %90+ Accuracy
+# Özellikler:
+# 1. SE-Block (Attention): Önemli özelliklere odaklanma.
+# 2. Focal Loss: Zor örnekleri (Web/Recon) cezalandırma.
 # ============================================================
 
 model:
-  type: "ids_resnet_mid"  # Loglarda Mid-Range olduğunu görelim
-  num_classes: 7          # DDoS, DoS, Recon, Web, Brute, Spoof, Mirai
+  type: "ids_resnet_elite"  # Factory'deki yeni model ismi
+  num_classes: 7            # DDoS, DoS, Recon, Web, Brute, Spoof, Mirai
   input_dim: 39
 
 data:
-  # ResNet büyük batch sever, 256 idealdir.
+  # ResNet büyük batch sever.
   batch_size: 256       
   num_workers: 0
 
 training:
   epochs: 60
   
-  # ResNet Mid-Range için ideal başlangıç hızı.
-  # Eğer loss çok dalgalanırsa 0.0005'e çekeriz ama 0.001 genelde iyidir.
-  learning_rate: 0.001
+  # Focal Loss kullanacağımız için başlangıç hızını bir tık artırdık.
+  # Bu, modelin zor örneklere daha agresif girmesini sağlar.
+  learning_rate: 0.002 
   
   weight_decay: 0.0001
   
   optimizer: "adamw"
 
   scheduler: "plateau"
-  scheduler_patience: 3   # 3 epoch boyunca iyileşme olmazsa LR düşür
+  scheduler_patience: 4   # Sabrı artırdık (3->4), hemen pes etmesin.
   scheduler_factor: 0.5   # LR'yi yarıya indir
   
   early_stopping_patience: 15
 
 checkpoint:
-  # Kayıt klasörünü değiştirdim, diğerleriyle karışmasın.
-  save_dir: "models/checkpoints/ids_attack_only_resnet_mid"
+  # Kayıt klasörü: Elite Model
+  save_dir: "models/checkpoints/ids_attack_only_resnet_elite"
 
 logging:
   verbose: true

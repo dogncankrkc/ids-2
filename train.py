@@ -155,7 +155,39 @@ def create_ids_loaders(batch_size: int, num_workers: int = 0):
 
     return train_loader, val_loader, test_loader, y_train
 
+# ---------------------------------------------------------
+# FOCAL LOSS CLASS (Zor örnekleri öğrenmeye zorlar)
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# FOCAL LOSS CLASS (FIXED - Robust Alpha Handling)
+# ---------------------------------------------------------
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+        self.ce = nn.CrossEntropyLoss(reduction='none')
 
+    def forward(self, inputs, targets):
+        ce_loss = self.ce(inputs, targets)
+        pt = torch.exp(-ce_loss) # Başarı olasılığı
+        
+        # Temel Focal Loss Formülü: (1 - pt)^gamma * CrossEntropy
+        focal_loss = (1 - pt) ** self.gamma * ce_loss
+        
+        # DÜZELTME BURADA:
+        # Eğer alpha tanımlıysa çarp, None ise hiç dokunma.
+        if self.alpha is not None:
+            focal_loss = self.alpha * focal_loss
+        
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+        
 # ============================================================
 # MAIN TRAINING PIPELINE
 # ============================================================
@@ -287,8 +319,8 @@ def main():
     print(f"[INFO] Class Weights: {class_weights.cpu().numpy()}")
 
     # Label Smoothing ile Loss
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
-
+    criterion = FocalLoss(gamma=2.0, alpha=None)   # <-- YENİSİ (Elite Mode)
+    
     optimizer = get_optimizer(
         model=model,
         optimizer_name=config["training"]["optimizer"],

@@ -6,9 +6,9 @@ Exports:
     - create_ids_model: Factory function to instantiate models easily
 """
 
-from .cnn_model import ResNet1D_Mid, create_ids_model
+from .cnn_model import ResidualBlockSE, create_ids_model
 
 __all__ = [
-    "ResNet1D_Mid",
+    "ResidualBlockSE",
     "create_ids_model",
 ]

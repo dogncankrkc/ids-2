@@ -1,22 +1,40 @@
 """
-ResNet1D - MID RANGE (Attack Specialist)
-Target: ~200k - 300k Parameters
-Configuration: 
-  - Starts with 32 channels (Standard for reliable feature extraction).
-  - Uses GroupNorm for stability.
+SE-ResNet1D - ELITE EDITION
+Target: >90% Accuracy on Attack-Only Dataset
+Technique: Squeeze-and-Excitation (Channel Attention)
 """
-
 import torch
 import torch.nn as nn
 
-class ResidualBlock(nn.Module):
+class SEBlock(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(SEBlock, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channel, channel // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1)
+        return x * y.expand_as(x)
+
+class ResidualBlockSE(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
-        super(ResidualBlock, self).__init__()
+        super(ResidualBlockSE, self).__init__()
         self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.GroupNorm(4, out_channels) # Stability King
+        self.bn1 = nn.GroupNorm(4, out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.GroupNorm(4, out_channels)
+        
+        # ELITE ADDITION: SE Block
+        self.se = SEBlock(out_channels)
+        
         self.downsample = downsample
 
     def forward(self, x):
@@ -26,25 +44,29 @@ class ResidualBlock(nn.Module):
         out = self.relu(out)
         out = self.conv2(out)
         out = self.bn2(out)
-        if self.downsample: residual = self.downsample(x)
+        
+        # Dikkat Mekanizması Devrede
+        out = self.se(out)
+        
+        if self.downsample:
+            residual = self.downsample(x)
+        
         out += residual
         out = self.relu(out)
         return out
 
-class ResNet1D_Mid(nn.Module):
+class ResNet1D_Elite(nn.Module):
     def __init__(self, num_classes=7, input_dim=39):
-        super(ResNet1D_Mid, self).__init__()
+        super(ResNet1D_Elite, self).__init__()
+        self.inplanes = 32
         
-        # --- MID-RANGE AYARLARI ---
-        # 32 Kanal ile başlıyoruz (Nano 16 idi). Bu parametre sayısını artırır.
-        self.inplanes = 32 
-        
+        # Giriş Genişletme (Daha fazla özellik yakala)
         self.conv1 = nn.Conv1d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.GroupNorm(4, 32)
         self.relu = nn.ReLU(inplace=True)
         
-        # 3 Katman (Derinlik artırmadık, genişlik artırdık)
-        self.layer1 = self._make_layer(32, blocks=2, stride=1) # 2 Blok yaptık (Daha iyi öğrensin)
+        # 3 Katmanlı Güçlü Yapı
+        self.layer1 = self._make_layer(32, blocks=2, stride=1)
         self.layer2 = self._make_layer(64, blocks=2, stride=2)
         self.layer3 = self._make_layer(128, blocks=2, stride=2)
         
@@ -60,10 +82,10 @@ class ResNet1D_Mid(nn.Module):
                 nn.GroupNorm(4, planes),
             )
         layers = []
-        layers.append(ResidualBlock(self.inplanes, planes, stride, downsample))
+        layers.append(ResidualBlockSE(self.inplanes, planes, stride, downsample))
         self.inplanes = planes
         for _ in range(1, blocks):
-            layers.append(ResidualBlock(self.inplanes, planes))
+            layers.append(ResidualBlockSE(self.inplanes, planes))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -81,6 +103,6 @@ class ResNet1D_Mid(nn.Module):
         return x
 
 def create_ids_model(mode: str = "multiclass", num_classes: int = 7, input_dim: int = 39):
-    print(f"[FACTORY] Initializing ResNet1D-MidRange (~200k Params).")
-    model = ResNet1D_Mid(num_classes=num_classes, input_dim=input_dim)
+    print(f"[FACTORY] Initializing ResNet1D-Elite (SE-Attention + Focal Ready).")
+    model = ResNet1D_Elite(num_classes=num_classes, input_dim=input_dim)
     return model
