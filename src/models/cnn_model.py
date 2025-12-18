@@ -1,7 +1,12 @@
 """
-ResNet1D - NANO STABLE (GroupNorm Edition)
-Target: Stability & Speed (~30k Parameters)
-Fix: Replaced BatchNorm with GroupNorm to stop validation fluctuations.
+ResNet1D - NANO PLUS (PURE MUSCLE EDITION)
+Target: Maximum Efficiency via Simplicity + Capacity
+Specs: 
+- Channels: 24 (High Capacity)
+- Activation: ReLU (Sharp Decision)
+- Norm: GroupNorm (Stability)
+- Attention: None (Raw Speed)
+Params: ~64k
 """
 
 import torch
@@ -17,10 +22,9 @@ class ResidualBlock(nn.Module):
             in_channels, out_channels, kernel_size=3, 
             stride=stride, padding=1, bias=False
         )
-        # STABILITY FIX: BatchNorm yerine GroupNorm
-        # GroupNorm(GrupSayısı, KanalSayısı). 4 Grup genelde idealdir.
+        # GroupNorm (4 grup her zaman idealdir)
         self.bn1 = nn.GroupNorm(4, out_channels) 
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=True) # Klasik ve Keskin
         
         # 2. Konvolüsyon
         self.conv2 = nn.Conv1d(
@@ -28,6 +32,8 @@ class ResidualBlock(nn.Module):
             stride=1, padding=1, bias=False
         )
         self.bn2 = nn.GroupNorm(4, out_channels)
+        
+        # DİKKAT: Attention yok! Saf işlem gücü.
         
         self.downsample = downsample
 
@@ -47,35 +53,38 @@ class ResidualBlock(nn.Module):
         out = self.relu(out)
         return out
 
-class ResNet1D_Nano(nn.Module):
+class ResNet1D_NanoPlus(nn.Module):
     def __init__(self, num_classes=7, input_dim=39):
-        super(ResNet1D_Nano, self).__init__()
+        super(ResNet1D_NanoPlus, self).__init__()
         
-        self.inplanes = 16
+        # KAPASİTE: 24 Kanal (16 yerine)
+        self.inplanes = 24
         
         # Giriş Katmanı
-        self.conv1 = nn.Conv1d(1, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.GroupNorm(4, 16) # Fix
+        self.conv1 = nn.Conv1d(1, 24, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.GroupNorm(4, 24)
         self.relu = nn.ReLU(inplace=True)
         
-        # Katmanlar (Nano: Her layerda 1 blok)
-        self.layer1 = self._make_layer(16, blocks=1, stride=1)
-        self.layer2 = self._make_layer(32, blocks=1, stride=2)
-        self.layer3 = self._make_layer(64, blocks=1, stride=2)
-        # Layer 4'ü iptal ettik (Parametre tasarrufu için)
+        # Katmanlar: 24 -> 48 -> 96
+        # Her katmanda 1 blok (Nano yapısı)
+        self.layer1 = self._make_layer(24, blocks=1, stride=1)
+        self.layer2 = self._make_layer(48, blocks=1, stride=2)
+        self.layer3 = self._make_layer(96, blocks=1, stride=2)
         
         self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.dropout = nn.Dropout(0.2) # Biraz düşürdük, GroupNorm zaten düzenliyor.
         
-        # Final (64 Kanal -> 7 Sınıf)
-        self.fc = nn.Linear(64, num_classes)
+        # Dropout standart 0.2
+        self.dropout = nn.Dropout(0.2) 
+        
+        # Çıkış: 96 özellik -> Sınıflar
+        self.fc = nn.Linear(96, num_classes)
 
     def _make_layer(self, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes:
             downsample = nn.Sequential(
                 nn.Conv1d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
-                nn.GroupNorm(4, planes), # Fix
+                nn.GroupNorm(4, planes),
             )
         layers = []
         layers.append(ResidualBlock(self.inplanes, planes, stride, downsample))
@@ -85,27 +94,20 @@ class ResNet1D_Nano(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        if x.dim() == 2:
-            x = x.unsqueeze(1)
-
+        if x.dim() == 2: x = x.unsqueeze(1)
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         x = self.dropout(x)
         x = self.fc(x)
         return x
-    
-    def count_parameters(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 def create_ids_model(mode: str = "multiclass", num_classes: int = 7, input_dim: int = 39):
-    print(f"[FACTORY] Initializing ResNet1D-Nano (GroupNorm Stable).")
-    model = ResNet1D_Nano(num_classes=num_classes, input_dim=input_dim)
+    print(f"[FACTORY] Initializing ResNet1D-NanoPlus (24Ch Pure Muscle).")
+    model = ResNet1D_NanoPlus(num_classes=num_classes, input_dim=input_dim)
     return model
