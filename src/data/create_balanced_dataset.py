@@ -1,35 +1,20 @@
 """
-FINAL DATASET CREATOR – CIC-IoT-2023 (MERGED EDITION)
+FINAL DATASET CREATOR – CIC-IoT-2023 (6-CLASS MERGED EDITION)
 
-Purpose:
-1. Read huge raw CSV in chunks.
-2. Map raw labels to 7 IDS classes (DoS & DDoS merged).
-3. Cap dataset size (Strategic limits).
-4. Save clean capped dataset for training.
+Changes:
+- Merged 'DoS' and 'DDoS' into a single class: 'DoS-DDoS'.
+- Fixed SettingWithCopyWarning by using explicit .copy()
 """
 
 import os
+import argparse
 import numpy as np
+from typing import Optional
 import pandas as pd
 
-# ============================
-# CONFIGURATION
-# ============================
-
-INPUT_PATH = "data/raw/CIC2023_FULL_MERGED.csv"
-OUTPUT_PATH = "data/processed/CIC2023_CAPPED.csv"
-
-CHUNK_SIZE = 1_000_000
-
-# Stratejik Limitler:
-# Benign'i gerçekçi tutuyoruz (250k).
-# Saldırıları 100k ile sınırlıyoruz ki eğitim çok uzamasın.
-BENIGN_CAP = 250_000
-ATTACK_CAP = 100_000
-
-# ------------------------------------------------------------
-# SELECTED FEATURES (AVAILABLE IN CSV)
-# ------------------------------------------------------------
+# ----------------------------
+# FEATURES (39)
+# ----------------------------
 SELECTED_FEATURES = [
     'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate',
     'fin_flag_number', 'syn_flag_number', 'rst_flag_number',
@@ -41,123 +26,188 @@ SELECTED_FEATURES = [
     'IAT', 'Number', 'Variance'
 ]
 
-# ============================
-# LABEL MAPPING (STRATEGIC MERGE)
-# ============================
-def map_to_multiclass(label: str) -> str:
+# ARTIK 6 SALDIRI SINIFI VAR
+ATTACK_CLASSES = ["BruteForce", "DoS-DDoS", "Mirai", "Recon", "Spoofing", "Web"]
+ALL_CLASSES_WITH_BENIGN = ["Benign"] + ATTACK_CLASSES
+
+# ----------------------------
+# LABEL MAPPING (6 ATTACKS)
+# ----------------------------
+def map_to_6attacks(label: str) -> str:
     label = str(label).strip().upper()
 
-    if label == 'NAN' or label == '':
-        return 'Other'
-    
-    # 1. Benign
-    if 'BENIGN' in label:
-        return 'Benign'
-    
-    # 2. DoS ve DDoS BİRLEŞİYOR -> 'DoS-DDoS'
-    # Teknik Açıklama: Elimizdeki özellik setinde 'Source Rate' olmadığı için
-    # model bu ikisini ayıramıyor. Performans için birleştirildi.
-    if 'DDOS' in label or 'DOS' in label:
-        return 'DoS-DDoS'
-        
-    # 3. Recon (Keşif)
-    if any(x in label for x in ['RECON', 'VULNERABILITY', 'PING', 'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']):
-        return 'Recon'
-        
-    # 4. Web Saldırıları
-    if any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER', 'COMMAND', 'BACKDOOR', 'MALWARE']):
-        return 'Web'
-        
-    # 5. Kaba Kuvvet
-    if 'BRUTEFORCE' in label or 'DICTIONARY' in label:
-        return 'BruteForce'
-        
-    # 6. Spoofing
-    if 'SPOOFING' in label or 'MITM' in label:
-        return 'Spoofing'
-        
-    # 7. Mirai (IoT Botnet)
-    if 'MIRAI' in label:
-        return 'Mirai'
-        
-    return 'Other'
+    if label in ("NAN", "", "NONE"):
+        return "Other"
 
-# ============================
-# MAIN GENERATOR
-# ============================
+    # Benign
+    if "BENIGN" in label:
+        return "Benign"
+
+    # --- KRİTİK BİRLEŞTİRME ---
+    # Hem DoS hem DDoS aynı etikete gidiyor
+    if "DDOS" in label or "DOS" in label:
+        return "DoS-DDoS"
+    # --------------------------
+
+    # Recon
+    if any(x in label for x in ["RECON", "VULNERABILITY", "PING", "PORTSCAN", "OSSCAN", "HOSTDISCOVERY"]):
+        return "Recon"
+
+    # Web attacks
+    if any(x in label for x in ["XSS", "SQL", "UPLOAD", "BROWSER", "COMMAND", "BACKDOOR", "MALWARE", "WEB"]):
+        return "Web"
+
+    # BruteForce
+    if "BRUTEFORCE" in label or "DICTIONARY" in label:
+        return "BruteForce"
+
+    # Spoofing / MITM
+    if "SPOOFING" in label or "MITM" in label:
+        return "Spoofing"
+
+    # Mirai
+    if "MIRAI" in label:
+        return "Mirai"
+
+    return "Other"
+
+
+def _find_label_column(df: pd.DataFrame) -> Optional[str]:
+    for cand in ["multiclass_label", "label", "Label"]:
+        if cand in df.columns:
+            return cand
+    return None
+
+
+def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
+    for col in SELECTED_FEATURES:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    keep = SELECTED_FEATURES + ["mapped_label"]
+    
+    # --- UYARI ÇÖZÜMÜ: .copy() eklendi ---
+    df = df[keep].copy() 
+    # -------------------------------------
+    
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    df.dropna(inplace=True)
+
+    for col in SELECTED_FEATURES:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df.dropna(inplace=True)
+
+    return df
+
+
 def main():
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=str, default="data/raw/CIC2023_FULL_MERGED.csv")
+    parser.add_argument("--chunk_size", type=int, default=1_000_000)
 
-    # Sayaçları yeni sınıflara göre güncelle
-    collected = {
-        'Benign': 0, 
-        'DoS-DDoS': 0, # Birleşmiş sınıf
-        'Recon': 0,
-        'Web': 0, 
-        'BruteForce': 0, 
-        'Spoofing': 0, 
-        'Mirai': 0
+    # Dosya ismini değiştirdik ki eski 7'li ile karışmasın
+    parser.add_argument("--out_attack", type=str, default="data/processed/CIC2023_ATTACK_ONLY_6CLASS.csv")
+    parser.add_argument("--out_with_benign", type=str, default="data/processed/CIC2023_WITH_BENIGN_6CLASS.csv")
+
+    parser.add_argument("--mode", type=str, default="both", choices=["attack_only", "with_benign", "both"])
+
+    # Caps (Limitler)
+    parser.add_argument("--benign_cap", type=int, default=250_000)
+    parser.add_argument("--attack_cap", type=int, default=100_000)
+    parser.add_argument("--web_cap", type=int, default=150_000)      # Web için yüksek limit
+    parser.add_argument("--bruteforce_cap", type=int, default=150_000) # BruteForce için yüksek limit
+
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
+    np.random.seed(args.seed)
+
+    os.makedirs(os.path.dirname(args.out_attack), exist_ok=True)
+    os.makedirs(os.path.dirname(args.out_with_benign), exist_ok=True)
+
+    caps_with_benign = {
+        "Benign": args.benign_cap,
+        "Web": args.web_cap,
+        "BruteForce": args.bruteforce_cap,
+        "DoS-DDoS": args.attack_cap, # Birleşik sınıf limiti
+        "Mirai": args.attack_cap,
+        "Recon": args.attack_cap,
+        "Spoofing": args.attack_cap,
     }
-    
-    chunks_to_save = []
 
-    print(f"[INFO] Creating capped dataset (Merged Edition)...")
-    print(f"[INFO] Target Caps -> Benign: {BENIGN_CAP}, Attacks: {ATTACK_CAP}")
+    caps_attack_only = {k: v for k, v in caps_with_benign.items() if k != "Benign"}
 
-    for i, chunk in enumerate(pd.read_csv(INPUT_PATH, chunksize=CHUNK_SIZE)):
+    collected_attack = {k: 0 for k in ATTACK_CLASSES}
+    collected_with_benign = {k: 0 for k in ALL_CLASSES_WITH_BENIGN}
+
+    chunks_attack = []
+    chunks_with_benign = []
+
+    print("[INFO] Creating capped datasets (6-CLASS MERGED)...")
+    print(f"[INFO] Mode: {args.mode}")
+
+    for i, chunk in enumerate(pd.read_csv(args.input, chunksize=args.chunk_size)):
         print(f" -> Processing chunk {i+1}", end="\r")
 
-        # Etiket sütununu bul
-        if "multiclass_label" in chunk.columns:
-            label_col = "multiclass_label"
-        elif "label" in chunk.columns:
-            label_col = "label"
-        else:
+        label_col = _find_label_column(chunk)
+        if label_col is None:
             continue
 
-        # Dönüştür
-        chunk["multiclass_label"] = chunk[label_col].apply(map_to_multiclass)
+        chunk["mapped_label"] = chunk[label_col].apply(map_to_6attacks)
+        chunk = chunk[chunk["mapped_label"] != "Other"]
 
-        # Temizle
-        chunk = chunk[chunk["multiclass_label"] != "Other"]
-        chunk = chunk[SELECTED_FEATURES + ["multiclass_label"]]
-        chunk.replace([np.inf, -np.inf], np.nan, inplace=True)
-        chunk.dropna(inplace=True)
+        # Attack Only
+        if args.mode in ("attack_only", "both"):
+            sub = chunk[chunk["mapped_label"].isin(ATTACK_CLASSES)].copy()
+            if not sub.empty:
+                sub = _ensure_features(sub)
+                for cls, group in sub.groupby("mapped_label"):
+                    cap = caps_attack_only.get(cls, args.attack_cap)
+                    if collected_attack[cls] >= cap:
+                        continue
+                    needed = cap - collected_attack[cls]
+                    take = group.sample(n=min(needed, len(group)), random_state=args.seed)
+                    chunks_attack.append(take)
+                    collected_attack[cls] += len(take)
 
-        # Topla (Capping)
-        for cls, group in chunk.groupby("multiclass_label"):
-            cap = BENIGN_CAP if cls == "Benign" else ATTACK_CAP
-            
-            # Eğer 'DoS-DDoS' sınıfıysa, DoS ve DDoS toplamını kontrol et
-            current_count = collected.get(cls, 0)
-            if current_count >= cap:
-                continue
+        # With Benign
+        if args.mode in ("with_benign", "both"):
+            sub2 = chunk[chunk["mapped_label"].isin(ALL_CLASSES_WITH_BENIGN)].copy()
+            if not sub2.empty:
+                sub2 = _ensure_features(sub2)
+                for cls, group in sub2.groupby("mapped_label"):
+                    cap = caps_with_benign.get(cls, args.attack_cap)
+                    if collected_with_benign[cls] >= cap:
+                        continue
+                    needed = cap - collected_with_benign[cls]
+                    take = group.sample(n=min(needed, len(group)), random_state=args.seed)
+                    chunks_with_benign.append(take)
+                    collected_with_benign[cls] += len(take)
 
-            needed = cap - current_count
-            take = group.head(needed)
-            
-            chunks_to_save.append(take)
-            collected[cls] += len(take)
+        stop_attack = all(collected_attack[c] >= caps_attack_only[c] for c in ATTACK_CLASSES)
+        stop_with_benign = all(collected_with_benign[c] >= caps_with_benign[c] for c in ALL_CLASSES_WITH_BENIGN)
 
-        # Erken Durdurma
-        if all(val >= (BENIGN_CAP if key == "Benign" else ATTACK_CAP) for key, val in collected.items()):
+        if (args.mode == "both" and stop_attack and stop_with_benign) or \
+           (args.mode == "attack_only" and stop_attack) or \
+           (args.mode == "with_benign" and stop_with_benign):
             print(f"\n[INFO] Caps reached at chunk {i+1}. Stopping early.")
             break
 
-    # Kaydet
-    print("\n[INFO] Concatenating and saving...")
-    if not chunks_to_save:
-        print("[ERROR] No data collected!")
-        return
+    if args.mode in ("attack_only", "both"):
+        df_attack = pd.concat(chunks_attack, ignore_index=True)
+        df_attack = df_attack.sample(frac=1, random_state=args.seed).reset_index(drop=True)
+        df_attack.rename(columns={"mapped_label": "multiclass_label"}, inplace=True)
+        print("\n[ATTACK-ONLY FINAL DISTRIBUTION]")
+        print(df_attack["multiclass_label"].value_counts())
+        df_attack.to_csv(args.out_attack, index=False)
+        print(f"[SUCCESS] Saved: {args.out_attack}")
 
-    df_final = pd.concat(chunks_to_save, ignore_index=True)
-    df_final = df_final.sample(frac=1, random_state=42).reset_index(drop=True)
-
-    print("\n[FINAL CLASS DISTRIBUTION]")
-    print(df_final["multiclass_label"].value_counts())
-
-    df_final.to_csv(OUTPUT_PATH, index=False)
-    print(f"\n[SUCCESS] Dataset saved to: {OUTPUT_PATH}")
+    if args.mode in ("with_benign", "both"):
+        df_wb = pd.concat(chunks_with_benign, ignore_index=True)
+        df_wb = df_wb.sample(frac=1, random_state=args.seed).reset_index(drop=True)
+        df_wb.rename(columns={"mapped_label": "multiclass_label"}, inplace=True)
+        df_wb.to_csv(args.out_with_benign, index=False)
+        print(f"[SUCCESS] Saved: {args.out_with_benign}")
 
 if __name__ == "__main__":
     main()
