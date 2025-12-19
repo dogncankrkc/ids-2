@@ -2,98 +2,117 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class SE1D(nn.Module):
-    def __init__(self, channels, reduction=8):
-        super().__init__()
-        hidden = max(1, channels // reduction)
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.fc1 = nn.Conv1d(channels, hidden, 1, bias=True)
-        self.fc2 = nn.Conv1d(hidden, channels, 1, bias=True)
-
-    def forward(self, x):
-        w = self.pool(x)
-        w = F.relu(self.fc1(w), inplace=True)
-        w = torch.sigmoid(self.fc2(w))
-        return x * w
-
-class ResidualBlockSE(nn.Module):
-    def __init__(self, in_ch, out_ch, stride=1, downsample=None, k=5, p=2, reduction=8):
-        super().__init__()
-        self.conv1 = nn.Conv1d(in_ch, out_ch, kernel_size=k, stride=stride, padding=p, bias=False)
-        self.gn1   = nn.GroupNorm(4, out_ch)
-        self.conv2 = nn.Conv1d(out_ch, out_ch, kernel_size=k, stride=1, padding=p, bias=False)
-        self.gn2   = nn.GroupNorm(4, out_ch)
-        self.se    = SE1D(out_ch, reduction=reduction)
-        self.relu  = nn.ReLU(inplace=True)
+# --- STANDART RESIDUAL BLOCK (GROUPNORM İLE) ---
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(ResidualBlock, self).__init__()
+        
+        # Conv 1
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.GroupNorm(4, out_channels) # 4 Grup stabilite için ideal
+        self.relu = nn.ReLU(inplace=True)
+        
+        # Conv 2
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.GroupNorm(4, out_channels)
+        
         self.downsample = downsample
 
     def forward(self, x):
-        res = x
-        out = self.relu(self.gn1(self.conv1(x)))
-        out = self.gn2(self.conv2(out))
-        out = self.se(out)
-        if self.downsample is not None:
-            res = self.downsample(x)
-        out = self.relu(out + res)
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        
+        out = self.conv2(out)
+        out = self.bn2(out)
+        
+        if self.downsample:
+            residual = self.downsample(x)
+        
+        out += residual
+        out = self.relu(out)
         return out
 
-class ResNet1D_Nano_Final(nn.Module):
-    def __init__(self, num_classes=7, input_dim=39, base=12, k1=7, k=5, reduction=8, coarse_classes=4):
-        super().__init__()
-        self.inplanes = base
+# --- 🔥 RESNET1D NANO PRIME (Hybrid Head Edition) ---
+class ResNet1D_Nano_Prime(nn.Module):
+    """
+    Target: ~28k Parameters | High F1 Score
+    Trick: Dual-Pooling Head (Avg + Max) to catch both DDoS (Volume) and Web (Spike) attacks.
+    """
+    def __init__(self, num_classes=7, input_dim=39):
+        super(ResNet1D_Nano_Prime, self).__init__()
+        
+        # Başlangıç Kanalları (Düşük tutuyoruz, hız için)
+        self.inplanes = 16 
+        
+        # Giriş Katmanı
+        self.conv1 = nn.Conv1d(1, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.GroupNorm(4, 16)
+        self.relu = nn.ReLU(inplace=True)
+        
+        # KATMANLAR: 16 -> 32 -> 64
+        # Stride=2 ile boyutu küçültüp özelliği yoğunlaştırıyoruz
+        self.layer1 = self._make_layer(16, blocks=1, stride=1)
+        self.layer2 = self._make_layer(32, blocks=1, stride=2)
+        self.layer3 = self._make_layer(64, blocks=1, stride=2)
+        
+        # --- HYBRID CONTEXT HEAD ---
+        # Sadece AvgPool değil, MaxPool da kullanıyoruz.
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)
+        self.max_pool = nn.AdaptiveMaxPool1d(1)
+        
+        self.dropout = nn.Dropout(0.3)
+        
+        # Çıkış katmanı: 64 (Avg) + 64 (Max) = 128 özellik girer
+        self.fc = nn.Linear(64 * 2, num_classes)
 
-        # 39 parametre: feature importance gate
-        self.feature_gate = nn.Parameter(torch.zeros(1, 1, input_dim))
-
-        self.conv1 = nn.Conv1d(1, base, kernel_size=k1, stride=1, padding=k1//2, bias=False)
-        self.gn1   = nn.GroupNorm(4, base)
-        self.relu  = nn.ReLU(inplace=True)
-
-        self.reduction = reduction
-        self.layer1 = self._make_layer(base,   stride=1, k=k)
-        self.layer2 = self._make_layer(base*2, stride=2, k=k)
-        self.layer3 = self._make_layer(base*4, stride=2, k=k)
-
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.drop = nn.Dropout(0.2)
-
-        self.fc_main   = nn.Linear(base*4, num_classes)
-        self.fc_coarse = nn.Linear(base*4, coarse_classes)
-
-    def _make_layer(self, planes, stride=1, k=5):
+    def _make_layer(self, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes:
             downsample = nn.Sequential(
                 nn.Conv1d(self.inplanes, planes, kernel_size=1, stride=stride, bias=False),
                 nn.GroupNorm(4, planes),
             )
-        p = k // 2
-        block = ResidualBlockSE(self.inplanes, planes, stride=stride, downsample=downsample, k=k, p=p, reduction=self.reduction)
+        layers = []
+        layers.append(ResidualBlock(self.inplanes, planes, stride, downsample))
         self.inplanes = planes
-        return nn.Sequential(block)
+        for _ in range(1, blocks):
+            layers.append(ResidualBlock(self.inplanes, planes))
+        return nn.Sequential(*layers)
 
-    def forward(self, x, return_coarse=False):
+    def forward(self, x):
+        # (N, L) gelirse (N, 1, L) yap
         if x.dim() == 2:
             x = x.unsqueeze(1)
-
-        # feature gate
-        x = x * torch.sigmoid(self.feature_gate)
-
-        x = self.relu(self.gn1(self.conv1(x)))
+            
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-
-        x = self.pool(x)
+        
+        # --- DUAL POOLING İŞLEMİ ---
+        x_avg = self.avg_pool(x)
+        x_max = self.max_pool(x)
+        
+        # İkisini birleştir (Concatenate)
+        x = torch.cat([x_avg, x_max], dim=1) # (N, 128, 1)
+        
         x = torch.flatten(x, 1)
-        x = self.drop(x)
+        x = self.dropout(x)
+        x = self.fc(x)
+        
+        return x
+    
+    def count_parameters(self):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
-        main = self.fc_main(x)
-        if return_coarse:
-            coarse = self.fc_coarse(x)
-            return main, coarse
-        return main
-
-def create_ids_model(mode="multiclass", num_classes=7, input_dim=39):
-    print("[FACTORY] ResNet1D-Nano Final (base=12, SE+Gate+CoarseHead) init")
-    return ResNet1D_Nano_Final(num_classes=num_classes, input_dim=input_dim, base=12)
+# --- Factory Fonksiyonu ---
+def create_ids_model(mode: str = "multiclass", num_classes: int = 7, input_dim: int = 39):
+    print(f"[FACTORY] Initializing ResNet1D-Nano-Prime (Dual-Pool Hybrid).")
+    model = ResNet1D_Nano_Prime(num_classes=num_classes, input_dim=input_dim)
+    print(f"[INFO] Approx Parameters: {model.count_parameters():,}")
+    return model

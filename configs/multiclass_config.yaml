@@ -1,28 +1,36 @@
+# ============================================================
+# NANO-PRIME CONFIG (Lightweight & Aggressive)
+# ============================================================
+
 model:
-  type: "ids_resnet_nano"  # Nano'ya döndük
+  type: "ids_resnet_nano_prime" # İsim sadece log için
   num_classes: 7
   input_dim: 39
 
 data:
-  batch_size: 256
-  num_workers: 0
+  # Model çok hafif olduğu için 512 veya 1024 yapabilirsin.
+  # Hız için 512 idealdir.
+  batch_size: 512
+  num_workers: 4
 
 training:
   epochs: 60
-  learning_rate: 0.001 
   
-  # Nano için standart weight decay
+  # Model küçük olduğu için biraz daha agresif bir LR ile başlıyoruz.
+  learning_rate: 0.002 
+  
   weight_decay: 0.0001
   
   optimizer: "adamw"
-  scheduler: "plateau"
-  scheduler_patience: 7   
-  scheduler_factor: 0.7   
+
+  # Cosine Annealing: LR'yi dalgalandırarak yerel minimumlardan kaçar.
+  scheduler: "cosine" 
+  
   early_stopping_patience: 15
 
 checkpoint:
-  # Klasör ismi: Nano + Wide + Aggressive Loss
-  save_dir: "models/checkpoints/ids_multiclass_nano_final_jointloss"
+  # Kayıt yeri
+  save_dir: "models/checkpoints/ids_nano_prime_hybrid_focal_last"
 
 logging:
   verbose: true

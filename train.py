@@ -43,30 +43,10 @@ from src.utils.helpers import (
 from src.data.preprocess import preprocess_multiclass
 from src.utils.visualization import plot_training_history, plot_confusion_matrix
 
+from src.utils.losses import FocalLoss
 # Preprocess dosyasından özellik listesini alıyoruz
 from src.data.preprocess import SELECTED_FEATURES
-import torch.nn.functional as F
 
-# --- FOCAL LOSS CLASS ---
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
-        super(FocalLoss, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.reduction = reduction
-
-    def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none', weight=self.alpha)
-        pt = torch.exp(-ce_loss)
-        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
-
-        if self.reduction == 'mean':
-            return focal_loss.mean()
-        elif self.reduction == 'sum':
-            return focal_loss.sum()
-        else:
-            return focal_loss
-        
 # ============================================================
 # PATHS & CONSTANTS
 # ============================================================
@@ -181,7 +161,6 @@ def create_ids_loaders(batch_size: int, num_workers: int = 0):
 # MAIN TRAINING PIPELINE
 # ============================================================
 
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -222,19 +201,6 @@ def main():
 
     print(f"[INFO] Using device: {device}")
     num_workers = config["data"].get("num_workers", 0)
-    
-    def joint_loss(main_logits, coarse_logits, targets):
-        loss_main = criterion_main(main_logits, targets)
-
-        # Coarse label üretimi
-        coarse_targets = torch.full_like(targets, 3)
-        coarse_targets[targets == 0] = 0  # BruteForce
-        coarse_targets[targets == 6] = 1  # Web
-        coarse_targets[(targets == 1) | (targets == 2)] = 2  # DDoS/DoS
-        loss_coarse = criterion_coarse(coarse_logits, coarse_targets)
-
-        return loss_main + 0.3 * loss_coarse
-
 
     # --------------------------------------------------------
     # Load data
@@ -309,33 +275,24 @@ def main():
     with open(os.path.join(config["checkpoint"]["save_dir"], "model_info.yaml"), "w") as f:
         yaml.safe_dump(model_info, f)
 
-   # --------------------------------------------------------
-    # Loss (MANUEL CEZALANDIRMA AYARI)
     # --------------------------------------------------------
-    
-    # Eskiden burası otomatikti, şimdi "Balans Ayarı" yapıyoruz.
-    # Neden? Çünkü Train verisi eşit olsa bile Web ve BruteForce yapısal olarak ZOR öğreniliyor.
-    # Onlara torpil geçiyoruz.
-    
-    # Sınıf Sıralaması (Loglardan teyit ettik):
-    # 0: BruteForce (ZOR - Hedef)
-    # 1: DDoS
-    # 2: DoS
-    # 3: Mirai
-    # 4: Recon
-    # 5: Spoofing
-    # 6: Web        (ZOR - Hedef)
+    # Loss with Class Weights
+    # --------------------------------------------------------
+    # Dengeli eğitim için sınıf ağırlıklarını hesapla
+    class_weights = compute_class_weight(
+        class_weight="balanced",
+        classes=np.unique(y_train),
+        y=y_train,
+    )
+    class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
+    print(f"[INFO] Class Weights: {class_weights.cpu().numpy()}")
 
-    # --------------------------------------------------------
-    # Loss: FOCAL LOSS'A GEÇİŞ
-    # --------------------------------------------------------
-    
-    # [BruteForce, DDoS, DoS, Mirai, Recon, Spoofing, Web]
-    main_w = torch.tensor([2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0], device=device)
-    criterion_main = nn.CrossEntropyLoss(weight=main_w, label_smoothing=0.05)
-    criterion_coarse = nn.CrossEntropyLoss()
+    # Label Smoothing ile Loss
+    # --- LOSS DEĞİŞİKLİĞİ: FOCAL LOSS ---
+    # Hybrid Focus: Gamma=2.5 (Zor örneklere odaklan)
+    print(f"[INFO] Using Focal Loss (Gamma=2.5) with Class Balancing.")
+    criterion = FocalLoss(alpha=class_weights, gamma=2.5, device=device)
 
-    
     optimizer = get_optimizer(
         model=model,
         optimizer_name=config["training"]["optimizer"],
@@ -343,16 +300,29 @@ def main():
         weight_decay=config["training"]["weight_decay"],
     )
 
-    scheduler = get_scheduler(
-        optimizer=optimizer,
-        scheduler_name=config["training"]["scheduler"],
-        epochs=config["training"]["epochs"],
-        patience=config["training"].get("early_stopping_patience", 10),
-    )
+    # --- SCHEDULER: COSINE ANNEALING ---
+    if config["training"]["scheduler"] == "cosine":
+        print("[INFO] Scheduler: CosineAnnealingWarmRestarts (Aggressive Mode)")
+        # T_0=10: İlk restart 10. epochta
+        # T_mult=2: Her döngüde periyot 2 katına çıkar (10, 20, 40...)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, 
+            T_0=10, 
+            T_mult=2, 
+            eta_min=1e-6
+        )
+    else:
+        # Config'de cosine seçili değilse standart scheduler'ı yükle
+        scheduler = get_scheduler(
+            optimizer=optimizer,
+            scheduler_name=config["training"]["scheduler"],
+            epochs=config["training"]["epochs"],
+            patience=config["training"].get("early_stopping_patience", 10),
+        )
 
     trainer = Trainer(
         model=model,
-        criterion=joint_loss,
+        criterion=criterion,
         optimizer=optimizer,
         device=device,
         scheduler=scheduler,
@@ -420,16 +390,6 @@ def main():
     )
 
     print(f"[DONE] Final model saved to: {final_model_path}")
-    
-    print("\a") # Terminal 'BEEP' sesi (Düt!)
-    
-    # Mac'in seninle konuşması için:
-    try:
-        # İstersen buraya Türkçe de yazabilirsin ama İngilizce sesi daha doğal çıkıyor.
-        os.system('say "Training is finished. Check the results master."')
-    except Exception as e:
-        print(f"voice command error: {e}")
-        
     if hasattr(trainer, 'best_val_acc'):
         print(f"[DONE] Best validation accuracy: {trainer.best_val_acc:.2f}%")
 
@@ -450,9 +410,7 @@ def main():
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs = inputs.to(device)
-            outputs = model(inputs, return_coarse=True)
-            if isinstance(outputs, tuple):
-                outputs = outputs[0]  # main logits
+            outputs = model(inputs)
             preds = torch.argmax(outputs, dim=1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.numpy())
