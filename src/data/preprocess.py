@@ -77,58 +77,48 @@ def preprocess_multiclass(df_real: pd.DataFrame):
         print(f"[INFO] Loading GAN data for training augmentation: {GAN_DATA_PATH}")
         df_gan = pd.read_csv(GAN_DATA_PATH)
         
-        # GAN verisini de aynı formata getir
         X_gan = df_gan[SELECTED_FEATURES].values
         y_gan_raw = df_gan[label_col].values
-        
-        # GAN etiketlerini encode et
         y_gan = encoder.transform(y_gan_raw)
 
-        # Hangi sınıfları ekleyeceğiz? (Web ve BruteForce)
-        # Train setindeki en kalabalık sınıfın sayısını hedefliyoruz
-        unique, counts = np.unique(y_train, return_counts=True)
-        max_train_count = max(counts) # Muhtemelen DDoS (yaklaşık 70k olacak)
-        
-        print(f"[INFO] Target Train Size per Class: {max_train_count}")
+        # HEDEF: ILIMLI AUGMENTATION (40.000)
+        TARGET_AUGMENT_LIMIT = 40000 
+        print(f"[INFO] Target Train Size per Class: Capped at {TARGET_AUGMENT_LIMIT}")
         
         X_gan_to_add = []
         y_gan_to_add = []
 
-        # Her sınıf için kontrol et
+        unique, counts = np.unique(y_train, return_counts=True)
+
         for cls_idx in unique:
             cls_name = encoder.inverse_transform([cls_idx])[0]
             current_count = counts[np.where(unique == cls_idx)[0][0]]
             
-            if current_count < max_train_count:
-                needed = max_train_count - current_count
+            # Sadece 40k'nın altındakileri tamamla (Web, BruteForce)
+            if current_count < TARGET_AUGMENT_LIMIT:
+                max_gan_add = int(current_count * 1.0)   # 1.0 -> en fazla 100% GAN
+                needed = min(TARGET_AUGMENT_LIMIT - current_count, max_gan_add)
                 
-                # Bu sınıfa ait GAN verilerini bul
                 indices = np.where(y_gan == cls_idx)[0]
                 
                 if len(indices) > 0:
-                    # Yeterince GAN verisi var mı? Varsa seç, yoksa tekrarla (replace=True)
                     selected_indices = np.random.choice(indices, needed, replace=True)
-                    
                     X_gan_to_add.append(X_gan[selected_indices])
                     y_gan_to_add.append(y_gan[selected_indices])
-                    
-                    print(f"   -> Augmenting {cls_name}: +{needed} GAN samples added to TRAIN.")
+                    print(f"   -> Augmenting {cls_name}: +{needed} GAN samples added.")
         
         if X_gan_to_add:
-            # Listeleri birleştir
             X_gan_add = np.vstack(X_gan_to_add)
             y_gan_add = np.concatenate(y_gan_to_add)
             
-            # Train setine ekle
             X_train = np.vstack([X_train, X_gan_add])
             y_train = np.concatenate([y_train, y_gan_add])
             
-            # Karıştır (Shuffle) - Çok önemli!
+            # Shuffle
             perm = np.random.permutation(len(X_train))
             X_train = X_train[perm]
             y_train = y_train[perm]
-            
-            print("[INFO] GAN augmentation applied to TRAIN set successfully.")
+            print("[INFO] Moderate GAN augmentation applied.")
     else:
         print("[WARN] GAN data file not found! Training will proceed with imbalanced real data.")
 

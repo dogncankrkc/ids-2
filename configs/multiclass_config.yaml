@@ -1,9 +1,5 @@
-# ============================================================
-# MULTICLASS CONFIG (RESNET1D TURBO - 7 CLASSES)
-# ============================================================
-
 model:
-  type: "ids_resnet_turbo" # İsim güncellendi (Loglarda karışmasın diye)
+  type: "ids_resnet_nano"  # Nano'ya döndük
   num_classes: 7
   input_dim: 39
 
@@ -13,30 +9,20 @@ data:
 
 training:
   epochs: 60
-  
-  # Turbo model daha büyük olduğu için LR 0.001 iyidir.
   learning_rate: 0.001 
   
-  weight_decay: 0.0005
+  # Nano için standart weight decay
+  weight_decay: 0.0001
   
   optimizer: "adamw"
-
   scheduler: "plateau"
-  
-  # --- KRİTİK DEĞİŞİKLİKLER ---
-  # Eskiden: 3 epoch iyileşmezse düşür.
-  # Şimdi: 7 epoch sabret. (Modelin loss platosunda gezinmesine izin ver)
   scheduler_patience: 7   
-  
-  # Eskiden: Yarıya (0.5) indir.
-  # Şimdi: %70'ine (0.7) indir. (Daha yumuşak fren yap)
   scheduler_factor: 0.7   
-  
   early_stopping_patience: 15
 
 checkpoint:
-  # Klasör ismi değişti: TURBO
-  save_dir: "models/checkpoints/ids_multiclass_resnet_turbo_7class_gan_balanced"
+  # Klasör ismi: Nano + Wide + Aggressive Loss
+  save_dir: "models/checkpoints/ids_multiclass_nano_final_jointloss"
 
 logging:
   verbose: true

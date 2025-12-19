@@ -45,7 +45,28 @@ from src.utils.visualization import plot_training_history, plot_confusion_matrix
 
 # Preprocess dosyasından özellik listesini alıyoruz
 from src.data.preprocess import SELECTED_FEATURES
+import torch.nn.functional as F
 
+# --- FOCAL LOSS CLASS ---
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none', weight=self.alpha)
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+        
 # ============================================================
 # PATHS & CONSTANTS
 # ============================================================
@@ -160,6 +181,7 @@ def create_ids_loaders(batch_size: int, num_workers: int = 0):
 # MAIN TRAINING PIPELINE
 # ============================================================
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -200,6 +222,19 @@ def main():
 
     print(f"[INFO] Using device: {device}")
     num_workers = config["data"].get("num_workers", 0)
+    
+    def joint_loss(main_logits, coarse_logits, targets):
+        loss_main = criterion_main(main_logits, targets)
+
+        # Coarse label üretimi
+        coarse_targets = torch.full_like(targets, 3)
+        coarse_targets[targets == 0] = 0  # BruteForce
+        coarse_targets[targets == 6] = 1  # Web
+        coarse_targets[(targets == 1) | (targets == 2)] = 2  # DDoS/DoS
+        loss_coarse = criterion_coarse(coarse_logits, coarse_targets)
+
+        return loss_main + 0.3 * loss_coarse
+
 
     # --------------------------------------------------------
     # Load data
@@ -274,20 +309,33 @@ def main():
     with open(os.path.join(config["checkpoint"]["save_dir"], "model_info.yaml"), "w") as f:
         yaml.safe_dump(model_info, f)
 
+   # --------------------------------------------------------
+    # Loss (MANUEL CEZALANDIRMA AYARI)
     # --------------------------------------------------------
-    # Loss with Class Weights
-    # --------------------------------------------------------
-    # Dengeli eğitim için sınıf ağırlıklarını hesapla
-    class_weights = compute_class_weight(
-        class_weight="balanced",
-        classes=np.unique(y_train),
-        y=y_train,
-    )
-    class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
-    print(f"[INFO] Class Weights: {class_weights.cpu().numpy()}")
+    
+    # Eskiden burası otomatikti, şimdi "Balans Ayarı" yapıyoruz.
+    # Neden? Çünkü Train verisi eşit olsa bile Web ve BruteForce yapısal olarak ZOR öğreniliyor.
+    # Onlara torpil geçiyoruz.
+    
+    # Sınıf Sıralaması (Loglardan teyit ettik):
+    # 0: BruteForce (ZOR - Hedef)
+    # 1: DDoS
+    # 2: DoS
+    # 3: Mirai
+    # 4: Recon
+    # 5: Spoofing
+    # 6: Web        (ZOR - Hedef)
 
-    # Label Smoothing ile Loss
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    # --------------------------------------------------------
+    # Loss: FOCAL LOSS'A GEÇİŞ
+    # --------------------------------------------------------
+    
+    # [BruteForce, DDoS, DoS, Mirai, Recon, Spoofing, Web]
+    main_w = torch.tensor([2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0], device=device)
+    criterion_main = nn.CrossEntropyLoss(weight=main_w, label_smoothing=0.05)
+    criterion_coarse = nn.CrossEntropyLoss()
+
+    
     optimizer = get_optimizer(
         model=model,
         optimizer_name=config["training"]["optimizer"],
@@ -304,7 +352,7 @@ def main():
 
     trainer = Trainer(
         model=model,
-        criterion=criterion,
+        criterion=joint_loss,
         optimizer=optimizer,
         device=device,
         scheduler=scheduler,
@@ -372,6 +420,16 @@ def main():
     )
 
     print(f"[DONE] Final model saved to: {final_model_path}")
+    
+    print("\a") # Terminal 'BEEP' sesi (Düt!)
+    
+    # Mac'in seninle konuşması için:
+    try:
+        # İstersen buraya Türkçe de yazabilirsin ama İngilizce sesi daha doğal çıkıyor.
+        os.system('say "Training is finished. Check the results master."')
+    except Exception as e:
+        print(f"voice command error: {e}")
+        
     if hasattr(trainer, 'best_val_acc'):
         print(f"[DONE] Best validation accuracy: {trainer.best_val_acc:.2f}%")
 
@@ -392,7 +450,9 @@ def main():
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs = inputs.to(device)
-            outputs = model(inputs)
+            outputs = model(inputs, return_coarse=True)
+            if isinstance(outputs, tuple):
+                outputs = outputs[0]  # main logits
             preds = torch.argmax(outputs, dim=1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.numpy())
