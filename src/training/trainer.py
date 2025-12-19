@@ -220,29 +220,29 @@ class Trainer:
     # =====================================================
     def test(self, test_loader: DataLoader):
         self.model.eval()
-        start_time = time.time()
 
         preds_all, targets_all = [], []
         total_samples = 0
+        forward_time = 0.0
 
         with torch.no_grad():
             for inputs, targets in test_loader:
-                inputs = inputs.to(self.device).float() # Buraya da .float() ekle
-                # targets GPU'ya gitmesine gerek yok, zaten CPU'da birleştireceğiz
-                # VEYA yukarıda gpu'ya attıysan aşağıda .cpu() yapmalısın.
-                
-                # DOĞRUSU ŞU:
                 inputs = inputs.to(self.device).float()
-                targets = targets.to(self.device) # Loss hesaplamıyorsak gerek yok ama model isteyebilir
-                
-                outputs = self.model(inputs)
-                preds = get_predictions_from_logits(outputs)
-                
-                preds_all.append(preds.cpu())
-                targets_all.append(targets.cpu()) # BURASI ÖNEMLİ: .cpu() ekle
+                targets = targets.to(self.device)
 
-        total_time = time.time() - start_time
-        time_per_sample = total_time / total_samples
+                start = time.time()
+                outputs = self.model(inputs)
+                forward_time += time.time() - start
+
+                preds = get_predictions_from_logits(outputs)
+
+                preds_all.append(preds.cpu())
+                targets_all.append(targets.cpu())
+
+                total_samples += targets.size(0)
+
+        if total_samples == 0:
+            raise RuntimeError("Test loader produced zero samples!")
 
         preds_all = torch.cat(preds_all)
         targets_all = torch.cat(targets_all)
@@ -252,16 +252,17 @@ class Trainer:
             "precision": float(precision(preds_all, targets_all)),
             "recall": float(recall(preds_all, targets_all)),
             "f1_score": float(f1_score(preds_all, targets_all)),
-            "test_time_sec": total_time,
+            "test_forward_time_sec": forward_time,
             "samples": total_samples,
-            "time_per_sample_ms": time_per_sample * 1000,
-            "samples_per_sec": total_samples / total_time,
+            "time_per_sample_ms": (forward_time / total_samples) * 1000,
+            "samples_per_sec": total_samples / forward_time,
         }
 
         print("\n" + "=" * 40)
         print("FINAL TEST RESULTS")
         print("=" * 40)
         for k, v in results.items():
-            print(f"{k:20s}: {v}")
+            print(f"{k:25s}: {v}")
 
         return results
+

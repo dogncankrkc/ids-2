@@ -30,7 +30,7 @@ training:
 
 checkpoint:
   # Kayıt yeri
-  save_dir: "models/checkpoints/ids_nano_prime_hybrid_focal_last"
+  save_dir: "models/checkpoints/ids_nano_prime_hybrid_focal_groupNorm_gan"
 
 logging:
   verbose: true
