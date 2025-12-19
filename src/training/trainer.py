@@ -1,14 +1,13 @@
 """
-CNN Model Trainer – IDS Version (Binary & Multiclass Support)
+CNN Model Trainer (IDS)
 
-Features:
-✓ Train / Validation loops
-✓ Epoch-level timing (train & val)
-✓ Early stopping
-✓ LR scheduler support
-✓ Checkpoint saving
-✓ Training history storage
-✓ Final test evaluation with latency metrics
+This module provides a PyTorch training pipeline for IDS models with support for:
+- Training and validation loops with epoch timing
+- Early stopping
+- Optional LR scheduler support
+- Checkpoint saving (last and best)
+- Training history tracking
+- Final test evaluation including forward-pass latency metrics
 """
 
 import os
@@ -67,7 +66,7 @@ class Trainer:
 
 
    # =====================================================
-    # TRAIN ONE EPOCH
+    # Train for one epoch
     # =====================================================
     def train_epoch(self, train_loader: DataLoader):
         self.model.train()
@@ -76,7 +75,7 @@ class Trainer:
         running_loss, correct, total = 0.0, 0, 0
 
         for inputs, targets in train_loader:
-            # 1. GÜVENLİK: Veriyi float32'ye zorla (Bazen double gelebilir, hata verir)
+            # Ensure consistent dtype and device placement
             inputs = inputs.to(self.device).float()
             targets = targets.to(self.device)
 
@@ -85,8 +84,7 @@ class Trainer:
             loss = self.criterion(outputs, targets)
             loss.backward()
 
-            # 2. STABİLİTE: Gradient Clipping (Ekleme Burası)
-            # Modelin saçmalamasını (exploding gradients) engeller.
+            # Gradient clipping for stability
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
 
             self.optimizer.step()
@@ -101,10 +99,10 @@ class Trainer:
             "acc": 100.0 * correct / total,
             "time": time.time() - start_time,
         }
-    
+
 
     # =====================================================
-    # VALIDATION
+    # Validation
     # =====================================================
     def validate(self, val_loader: DataLoader):
         self.model.eval()
@@ -140,7 +138,7 @@ class Trainer:
         }
 
     # =====================================================
-    # TRAIN LOOP
+    # Training loop
     # =====================================================
     def train(
         self,
@@ -157,7 +155,7 @@ class Trainer:
             train_stats = self.train_epoch(train_loader)
             val_stats = self.validate(val_loader)
 
-            # Save history
+            # Update training history
             self.history["train_loss"].append(train_stats["loss"])
             self.history["train_acc"].append(train_stats["acc"])
             self.history["val_loss"].append(val_stats["loss"])
@@ -168,7 +166,7 @@ class Trainer:
             self.history["train_time"].append(train_stats["time"])
             self.history["val_time"].append(val_stats["time"])
 
-            # Scheduler
+            # Step scheduler
             current_lr = self.optimizer.param_groups[0]["lr"]
             if self.scheduler:
                 if isinstance(self.scheduler, ReduceLROnPlateau):
@@ -179,7 +177,7 @@ class Trainer:
 
             self.history["lr"].append(current_lr)
 
-            # Logging
+            # Progress logging
             if verbose:
                 print(f"\nEpoch [{epoch}/{epochs}]")
                 print(f"  Train Loss : {train_stats['loss']:.4f} | Train Acc : {train_stats['acc']:.2f}%")
@@ -190,13 +188,13 @@ class Trainer:
                 print(f"  Train Time : {train_stats['time']:.2f}s | Val Time : {val_stats['time']:.2f}s")
                 print(f"  LR         : {current_lr:.6f}")
 
-            # Checkpoint saving
+            # Save last checkpoint
             torch.save(
                 self.model.state_dict(),
                 os.path.join(self.checkpoint_dir, "last_model.pth")
             )
-            
-            # Early stopping
+
+            # Early stopping and best checkpoint
             if val_stats["loss"] < self.best_val_loss:
                 self.best_val_loss = val_stats["loss"]
                 self.best_val_acc = val_stats["acc"]
@@ -216,7 +214,7 @@ class Trainer:
         return self.history
 
     # =====================================================
-    # FINAL TEST (LATENCY BENCHMARK)
+    # Final test with latency benchmark
     # =====================================================
     def test(self, test_loader: DataLoader):
         self.model.eval()
@@ -265,4 +263,3 @@ class Trainer:
             print(f"{k:25s}: {v}")
 
         return results
-

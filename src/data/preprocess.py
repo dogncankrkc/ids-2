@@ -91,7 +91,6 @@ def preprocess_multiclass(df_real: pd.DataFrame):
     X_test  = scaler.transform(X_test)
     joblib.dump(scaler, SCALER_PATH)
     
-    # ARA KAYIT: Saf eğitim verisini kaydet (Rapor kıyaslaması için şart)
     print("\n   [INFO] Saving INTERMEDIATE datasets (Pure Real)...")
     _save_split(X_train, y_train, "train_PURE_REAL")
     _save_split(X_val,   y_val,   "val")
@@ -127,7 +126,6 @@ def preprocess_multiclass(df_real: pd.DataFrame):
             cls_name = encoder.inverse_transform([cls_idx])[0]
             real_count = counts[np.where(unique == cls_idx)[0][0]]
             
-            # Hedef Hesapla
             target_max = min(max_real_count, HARD_CAP)
             ratio_limit = int(real_count * (1 + RATIO_CAP))
             final_target = min(target_max, ratio_limit)
@@ -171,10 +169,10 @@ def preprocess_multiclass(df_real: pd.DataFrame):
     # 5. FINAL SAVE
     # -------------------------------------------------------
     print(f"\n[STEP 5] Saving Final Augmented Datasets")
-    _save_split(X_train, y_train, "train") # Bu artık Augmented Train
+    _save_split(X_train, y_train, "train") 
     
     print("\n" + "="*60)
-    print("✅ PREPROCESSING COMPLETED SUCCESSFULLY")
+    print("PREPROCESSING COMPLETED SUCCESSFULLY")
     print("="*60 + "\n")
 
     return X_train, X_val, X_test, y_train, y_val, y_test

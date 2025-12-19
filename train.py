@@ -1,20 +1,20 @@
 """
-IDS – ResNet-MLP Training Script (Multiclass).
+IDS – ResNet-MLP Training Script (Multiclass)
 
-Architecture:
-- Input features kept as 1D vector (N, 1, L)
+This script runs a full multiclass IDS training pipeline using a ResNet-based 1D CNN.
+
+Architecture and data format:
+- Numerical features are treated as a 1D signal: (N, 1, L)
 - Designed for network traffic classification (IDS)
-- StandardScaler + fixed LabelEncoder (NO data leakage)
+- StandardScaler + fixed LabelEncoder to prevent data leakage
 
 Pipeline:
 1. Load capped dataset
-2. Preprocess (split + scaling + encoder, optional selective SMOTE inside preprocess)
-3. Reshape features → ResNet-MLP format (N, 1, L)
+2. Preprocess (split, scaling, encoding)
+3. Reshape features to ResNet format (N, 1, L)
 4. Train with early stopping
-5. Evaluate best model
-6. Save metrics, model, plots
-
-Author: IDS Research Pipeline
+5. Evaluate best checkpoint on test set
+6. Save metrics, model bundle, and plots
 """
 
 import argparse
@@ -30,8 +30,8 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.metrics import confusion_matrix
 from sklearn.utils.class_weight import compute_class_weight
 
-# Model Factory (src/models/cnn_model.py içindeki fonksiyonu çağırır)
-from src.models.cnn_model import create_ids_model   
+# Model factory (defined in src/models/cnn_model.py)
+from src.models.cnn_model import create_ids_model
 from src.training.trainer import Trainer
 from src.utils.helpers import (
     set_seed,
@@ -44,38 +44,69 @@ from src.data.preprocess import preprocess_multiclass
 from src.utils.visualization import plot_training_history, plot_confusion_matrix
 
 from src.utils.losses import FocalLoss
-# Preprocess dosyasından özellik listesini alıyoruz
+# Feature list imported from preprocess module for consistent test-split export
 from src.data.preprocess import SELECTED_FEATURES
 
+
 # ============================================================
-# PATHS & CONSTANTS
+# Paths and constants
 # ============================================================
 
 PROCESSED_DATA_PATH = "data/processed/CIC2023_SEPARATE_ATTACK_ONLY.csv"
 TEST_DATA_SAVE_PATH = "data/processed/test_split_saved.csv"
 ENCODER_PATH = "data/processed/label_encoder.pkl"
 
+
 # ============================================================
-# UTILITIES
+# Utilities
 # ============================================================
 
 def load_config(config_path: str):
-    """Loads YAML configuration file."""
+    """
+    Load a YAML configuration file.
+
+    Args:
+        config_path (str): Path to the YAML config file.
+
+    Returns:
+        dict: Parsed configuration dictionary.
+    """
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
+
 def to_python_int(d):
-    """Helper to convert numpy types to python int for YAML dumping"""
+    """
+    Convert NumPy integer keys/values to native Python int.
+
+    This is useful when dumping dictionaries to YAML.
+
+    Args:
+        d (dict): Dictionary potentially containing NumPy integer types.
+
+    Returns:
+        dict: Dictionary converted to Python int types.
+    """
     return {int(k): int(v) for k, v in d.items()}
 
+
 # ============================================================
-# DATA LOADER CREATION
+# Data loader creation
 # ============================================================
 
 def create_ids_loaders(batch_size: int, num_workers: int = 0):
     """
-    Loads dataset, applies preprocessing and prepares PyTorch DataLoaders.
-    ResNet input format: (N, 1, L)
+    Load the dataset, apply preprocessing, and construct PyTorch DataLoaders.
+
+    Output tensor format is compatible with ResNet1D models: (N, 1, L).
+
+    Args:
+        batch_size (int): Batch size for DataLoaders.
+        num_workers (int): Number of DataLoader workers.
+
+    Returns:
+        Tuple[DataLoader, DataLoader, DataLoader, np.ndarray]:
+            Train, validation, and test loaders plus y_train labels.
     """
     print(f"[INFO] Loading dataset from: {PROCESSED_DATA_PATH}")
 
@@ -88,16 +119,18 @@ def create_ids_loaders(batch_size: int, num_workers: int = 0):
     df = pd.read_csv(PROCESSED_DATA_PATH)
 
     # --------------------------------------------------------
-    # Preprocessing (split + scaling + encoder, optional SMOTE inside)
+    # Preprocessing (split, scaling, encoding; optional SMOTE inside)
     # --------------------------------------------------------
-    # Bu fonksiyon preprocess.py'den geliyor ve tüm ağır işi yapıyor
+    # This function performs all preprocessing steps in a leak-free manner.
     X_train, X_val, X_test, y_train, y_val, y_test = preprocess_multiclass(df)
 
     print("[INFO] Multiclass preprocessing completed.")
     print(f"[INFO] Feature count per sample (L): {X_train.shape[1]}")
 
-    # Basic safety checks
-    assert X_train.shape[1] == X_val.shape[1] == X_test.shape[1], "Feature count mismatch across splits!"
+    # Basic safety check: feature dimensionality must match across splits
+    assert (
+        X_train.shape[1] == X_val.shape[1] == X_test.shape[1]
+    ), "Feature count mismatch across splits!"
 
     # --------------------------------------------------------
     # Save processed test split (for reproducibility)
@@ -112,10 +145,9 @@ def create_ids_loaders(batch_size: int, num_workers: int = 0):
     print(f"[SUCCESS] Test set saved ({len(df_test)} samples)")
 
     # --------------------------------------------------------
-    # Tensor conversion & reshape for ResNet: (N, 1, L)
+    # Tensor conversion and reshape for ResNet: (N, 1, L)
     # --------------------------------------------------------
-    # Model (N, 1, L) bekliyor, o yüzden unsqueeze(1) yapıyoruz.
-    # Ancak yeni model (N, L) de kabul ediyor, yine de standart koruyalım.
+    # The model expects input as (N, 1, L), so we add a channel dimension via unsqueeze(1).
     X_train_t = torch.tensor(X_train, dtype=torch.float32).unsqueeze(1)
     X_val_t   = torch.tensor(X_val,   dtype=torch.float32).unsqueeze(1)
     X_test_t  = torch.tensor(X_test,  dtype=torch.float32).unsqueeze(1)
@@ -158,7 +190,7 @@ def create_ids_loaders(batch_size: int, num_workers: int = 0):
 
 
 # ============================================================
-# MAIN TRAINING PIPELINE
+# Main training pipeline
 # ============================================================
 
 def main():
@@ -172,28 +204,30 @@ def main():
     args = parser.parse_args()
 
     # --------------------------------------------------------
-    # Load config & setup
+    # Load config and initialize environment
     # --------------------------------------------------------
     if not os.path.exists(args.config):
-        # Varsayılan konfig dosyası yoksa uyarı ver
-        print(f"[WARNING] Config file not found at {args.config}. Make sure path is correct.")
-    
-    # Config dosyasını yükle
+        print(f"[WARNING] Config file not found at {args.config}. Make sure the path is correct.")
+
     try:
         config = load_config(args.config)
-    except:
-        # Fallback config (Eğer dosya yoksa kod patlamasın diye)
+    except Exception:
+        # Fallback configuration to avoid crashing when config is missing/invalid
         print("[INFO] Loading fallback default configuration.")
         config = {
             "model": {"type": "ids_resnet_mlp", "num_classes": 8},
             "data": {"batch_size": 128, "num_workers": 0},
             "training": {
-                "epochs": 50, "learning_rate": 0.001, "weight_decay": 0.0001,
-                "optimizer": "adamw", "scheduler": "plateau", "early_stopping_patience": 10
+                "epochs": 50,
+                "learning_rate": 0.001,
+                "weight_decay": 0.0001,
+                "optimizer": "adamw",
+                "scheduler": "plateau",
+                "early_stopping_patience": 10,
             },
             "checkpoint": {"save_dir": "models/checkpoints/ids_multiclass_resnet1d"},
             "logging": {"verbose": True},
-            "seed": 42
+            "seed": 42,
         }
 
     set_seed(config.get("seed", 42))
@@ -209,9 +243,9 @@ def main():
         batch_size=config["data"]["batch_size"],
         num_workers=num_workers,
     )
-    
+
     # --------------------------------------------------------
-    # SAVE CLASS DISTRIBUTION (FOR REPORTING)
+    # Save class distribution (for reporting)
     # --------------------------------------------------------
     dist = {
         "train": to_python_int(
@@ -224,7 +258,7 @@ def main():
             dict(pd.Series(test_loader.dataset.tensors[1].numpy()).value_counts().sort_index())
         ),
     }
-        
+
     os.makedirs(config["checkpoint"]["save_dir"], exist_ok=True)
     with open(
         os.path.join(config["checkpoint"]["save_dir"], "class_distribution.yaml"),
@@ -243,27 +277,27 @@ def main():
         for i, cls in enumerate(class_names):
             print(f"  {i} -> {cls}")
     else:
-        # Fallback if encoder not found immediately (shouldn't happen)
+        # Fallback if encoder is not found
         num_classes = 8
         class_names = [str(i) for i in range(8)]
 
     # --------------------------------------------------------
-    # Model Initialization
+    # Model initialization
     # --------------------------------------------------------
-    # Preprocess adımından gelen input boyutunu (L) otomatik al
-    input_dim = train_loader.dataset.tensors[0].shape[2] # (N, 1, L) -> L is index 2
-    
+    # Input dimension L is taken from the preprocessed tensor: (N, 1, L)
+    input_dim = train_loader.dataset.tensors[0].shape[2]
+
     model = create_ids_model(
-        mode="multiclass", 
+        mode="multiclass",
         num_classes=num_classes,
         input_dim=input_dim
     ).to(device)
 
     print(f"\n[INFO] Model: {model.__class__.__name__}")
     print(f"[INFO] Trainable parameters: {count_parameters(model):,}")
-    
+
     # --------------------------------------------------------
-    # Save Model Info
+    # Save model info (for experiment tracking)
     # --------------------------------------------------------
     model_info = {
         "model_name": model.__class__.__name__,
@@ -271,14 +305,14 @@ def main():
         "input_shape": f"(N, 1, {input_dim})",
         "num_features": input_dim,
     }
-    
+
     with open(os.path.join(config["checkpoint"]["save_dir"], "model_info.yaml"), "w") as f:
         yaml.safe_dump(model_info, f)
 
     # --------------------------------------------------------
-    # Loss with Class Weights
+    # Loss function with class weights
     # --------------------------------------------------------
-    # Dengeli eğitim için sınıf ağırlıklarını hesapla
+    # Compute balanced class weights from the training labels
     class_weights = compute_class_weight(
         class_weight="balanced",
         classes=np.unique(y_train),
@@ -287,10 +321,8 @@ def main():
     class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
     print(f"[INFO] Class Weights: {class_weights.cpu().numpy()}")
 
-    # Label Smoothing ile Loss
-    # --- LOSS DEĞİŞİKLİĞİ: FOCAL LOSS ---
-    # Hybrid Focus: Gamma=2.5 (Zor örneklere odaklan)
-    print(f"[INFO] Using Focal Loss (Gamma=2.5) with Class Balancing.")
+    # Use Focal Loss to emphasize hard and minority-class samples
+    print("[INFO] Using Focal Loss (gamma=2.5) with class balancing")
     criterion = FocalLoss(alpha=class_weights, gamma=2.5, device=device)
 
     optimizer = get_optimizer(
@@ -300,19 +332,18 @@ def main():
         weight_decay=config["training"]["weight_decay"],
     )
 
-    # --- SCHEDULER: COSINE ANNEALING ---
+    # --------------------------------------------------------
+    # Scheduler selection
+    # --------------------------------------------------------
     if config["training"]["scheduler"] == "cosine":
-        print("[INFO] Scheduler: CosineAnnealingWarmRestarts (Aggressive Mode)")
-        # T_0=10: İlk restart 10. epochta
-        # T_mult=2: Her döngüde periyot 2 katına çıkar (10, 20, 40...)
+        print("[INFO] Scheduler: CosineAnnealingWarmRestarts")
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, 
-            T_0=10, 
-            T_mult=2, 
+            optimizer,
+            T_0=10,
+            T_mult=2,
             eta_min=1e-6
         )
     else:
-        # Config'de cosine seçili değilse standart scheduler'ı yükle
         scheduler = get_scheduler(
             optimizer=optimizer,
             scheduler_name=config["training"]["scheduler"],
@@ -330,7 +361,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Training Loop
+    # Training loop
     # --------------------------------------------------------
     print("\n" + "=" * 40)
     print(f"STARTING TRAINING ({model.__class__.__name__})")
@@ -345,18 +376,18 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Load Best Model & Test
+    # Load best checkpoint and evaluate on test set
     # --------------------------------------------------------
     best_model_path = os.path.join(config["checkpoint"]["save_dir"], "best_model.pth")
 
     if os.path.exists(best_model_path):
         print("\n[INFO] Loading best model from checkpoint...")
         model.load_state_dict(torch.load(best_model_path, map_location=device))
-    
+
     model.eval()
 
     # --------------------------------------------------------
-    # Final Evaluation
+    # Final evaluation
     # --------------------------------------------------------
     print("\n[INFO] Running final evaluation on test set...")
     test_results = trainer.test(test_loader)
@@ -371,7 +402,7 @@ def main():
     print(f"[INFO] Test metrics saved to: {metrics_path}")
 
     # --------------------------------------------------------
-    # Save Final Bundle
+    # Save final bundle
     # --------------------------------------------------------
     final_model_path = os.path.join(
         config["checkpoint"]["save_dir"],
@@ -394,7 +425,7 @@ def main():
         print(f"[DONE] Best validation accuracy: {trainer.best_val_acc:.2f}%")
 
     # --------------------------------------------------------
-    # Plot Results
+    # Plot results
     # --------------------------------------------------------
     plot_training_history(
         history=history,
@@ -426,6 +457,7 @@ def main():
         ),
         normalize=True,
     )
+
 
 if __name__ == "__main__":
     main()

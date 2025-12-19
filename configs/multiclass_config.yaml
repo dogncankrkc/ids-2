@@ -3,33 +3,33 @@
 # ============================================================
 
 model:
-  type: "ids_resnet_nano_prime" # İsim sadece log için
+  type: "ids_resnet_nano_prime" # Name used only for logging
   num_classes: 7
   input_dim: 39
 
 data:
-  # Model çok hafif olduğu için 512 veya 1024 yapabilirsin.
-  # Hız için 512 idealdir.
+  # Model is very lightweight; use 512 or 1024.
+  # 512 is ideal for speed.
   batch_size: 512
   num_workers: 4
 
 training:
   epochs: 60
   
-  # Model küçük olduğu için biraz daha agresif bir LR ile başlıyoruz.
+  # Small model: start with a slightly higher learning rate.
   learning_rate: 0.002 
   
   weight_decay: 0.0001
   
   optimizer: "adamw"
 
-  # Cosine Annealing: LR'yi dalgalandırarak yerel minimumlardan kaçar.
+  # 'cosine' scheduler: uses cosine annealing to help escape local minima.
   scheduler: "cosine" 
   
   early_stopping_patience: 15
 
 checkpoint:
-  # Kayıt yeri
+  # Directory to save checkpoints
   save_dir: "models/checkpoints/ids_nano_prime_hybrid_focal_groupNorm_gan"
 
 logging:

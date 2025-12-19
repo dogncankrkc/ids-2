@@ -1,29 +1,40 @@
+"""
+Focal Loss (Multiclass)
+
+This module implements the Focal Loss function for multiclass classification.
+Focal Loss reduces the contribution of easy-to-classify samples and focuses
+training on hard and minority-class examples, making it well-suited for
+imbalanced intrusion detection datasets.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class FocalLoss(nn.Module):
     """
-    Multi-class Focal Loss implementation.
-    
-    Amaç: 
-    Standart Cross Entropy, kolay sınıflandırılan örneklerin baskınlığında kalır. 
-    Focal Loss, modelin "zaten bildiği" örneklerin loss değerini (gamma ile) 
-    kısıp, enerjisini "zor/azınlık" sınıflara (Web Attack, Backdoor vb.) harcamasını sağlar.
-    
+    Multiclass Focal Loss implementation.
+
+    Motivation:
+    Standard Cross Entropy loss is dominated by easy samples.
+    Focal Loss down-weights well-classified examples and forces the model
+    to focus on hard or minority-class samples.
+
     Parameters:
-        alpha (Tensor, optional): Sınıf ağırlıkları (Class balancing için).
-        gamma (float): Odaklanma parametresi. (2.0 veya 2.5 genelde idealdir).
-        reduction (str): 'mean', 'sum' veya 'none'.
-        device (str/torch.device): GPU veya CPU.
+        alpha (Tensor, optional): Class weights for imbalance handling.
+        gamma (float): Focusing parameter controlling down-weighting strength.
+        reduction (str): 'mean', 'sum', or 'none'.
+        device (str or torch.device): Target device for tensors.
     """
-    def __init__(self, alpha=None, gamma=2.0, reduction='mean', device='cpu'):
+
+    def __init__(self, alpha=None, gamma=2.0, reduction="mean", device="cpu"):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.reduction = reduction
         self.device = device
-        
-        # Alpha (Sınıf Ağırlıkları) kontrolü
+
+        # Optional class weighting (alpha)
         if alpha is not None:
             if isinstance(alpha, (list, tuple)):
                 self.alpha = torch.tensor(alpha, dtype=torch.float32).to(device)
@@ -36,28 +47,34 @@ class FocalLoss(nn.Module):
 
     def forward(self, inputs, targets):
         """
+        Compute the Focal Loss.
+
         Args:
-            inputs: [N, C] (Modelin çıktısı / Logits) - Softmax uygulanmamış ham değerler
-            targets: [N] (Gerçek sınıf indeksleri)
+            inputs (Tensor): Logits of shape [N, C] (no softmax applied).
+            targets (Tensor): Ground-truth class indices of shape [N].
+
+        Returns:
+            Tensor: Computed focal loss value.
         """
-        
-        # 1. Standart Cross Entropy Loss hesapla (Reduction olmadan, ham loss lazım)
-        # weight=self.alpha diyerek dengesiz veri setini yönetiyoruz.
-        ce_loss = F.cross_entropy(inputs, targets, weight=self.alpha, reduction='none')
-        
-        # 2. Modelin o sınıfı tahmin etme olasılığını (pt) bul
-        # Formül: log(pt) = -ce_loss  =>  pt = exp(-ce_loss)
+
+        # Compute standard cross-entropy loss without reduction
+        ce_loss = F.cross_entropy(
+            inputs,
+            targets,
+            weight=self.alpha,
+            reduction="none",
+        )
+
+        # Compute pt = probability of the correct class
         pt = torch.exp(-ce_loss)
-        
-        # 3. Focal Loss Formülü: (1 - pt)^gamma * CE_Loss
-        # pt yüksekse (kolay örnek), (1-pt) sıfıra yaklaşır -> Loss düşer.
-        # pt düşükse (zor örnek), (1-pt) bire yaklaşır -> Loss olduğu gibi kalır (cezalandırır).
+
+        # Apply focal loss modulation
         focal_loss = ((1 - pt) ** self.gamma) * ce_loss
 
-        # 4. Reduction (Ortalama veya Toplam)
-        if self.reduction == 'mean':
+        # Apply reduction
+        if self.reduction == "mean":
             return focal_loss.mean()
-        elif self.reduction == 'sum':
+        elif self.reduction == "sum":
             return focal_loss.sum()
         else:
             return focal_loss

@@ -1,32 +1,41 @@
 """
-Helper Utilities.
+Helper Utilities for CNN Training Pipelines
 
-This module provides general helper functions for CNN model development:
-- Seeding for reproducibility
-- Device selection (CPU/CUDA/MPS)
-- Model summarization
-- Optimizer and Scheduler factories
+This module provides reusable utility functions commonly required in CNN-based
+training workflows, including:
+- Reproducibility via global seeding
+- Automatic device selection (MPS / CUDA / CPU)
+- Model parameter counting
+- Optimizer factory
+- Learning rate scheduler factory
+- One-call training environment preparation
 """
 
 import os
 import random
-from typing import Optional, Dict, Any
+from typing import Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-# ------------------------
-# UTILITY FUNCTIONS
-# ------------------------
+# --------------------------------------------------
+# Reproducibility utilities
+# --------------------------------------------------
 
-# Set random seeds for reproducibility
 def set_seed(seed: int = 42) -> None:
     """
-    Set random seeds for reproducibility across numpy, torch, and python random.
+    Set global random seeds to ensure experiment reproducibility.
+
+    This function synchronizes random states across:
+    - Python's built-in random module
+    - NumPy
+    - PyTorch (CPU and CUDA)
+
+    It also enforces deterministic behavior in cuDNN at the cost of performance.
 
     Args:
-        seed (int): Random seed value.
+        seed (int): Seed value used across all random generators.
     """
     random.seed(seed)
     np.random.seed(seed)
@@ -36,51 +45,52 @@ def set_seed(seed: int = 42) -> None:
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
+# --------------------------------------------------
 # Device selection
+# --------------------------------------------------
+
 def get_device() -> torch.device:
     """
-    Automatically selects the best available device:
-    - MPS (Apple Silicon)
-    - CUDA (NVIDIA)
-    - CPU (Fallback)
-    
+    Select the best available computation device automatically.
+
+    Priority order:
+    1. Apple Silicon GPU via MPS
+    2. NVIDIA GPU via CUDA
+    3. CPU as a fallback
+
     Returns:
-        torch.device: Selected device.
+        torch.device: Selected computation device.
     """
-    if torch.backends.mps.is_available():   # Apple Silicon GPU
+    if torch.backends.mps.is_available():
         return torch.device("mps")
-    elif torch.cuda.is_available():         # NVIDIA GPU 
+    elif torch.cuda.is_available():
         return torch.device("cuda")
     else:
-        return torch.device("cpu")          # Fallback to CPU
+        return torch.device("cpu")
 
-# Model summary and parameter counting
+
+# --------------------------------------------------
+# Model inspection
+# --------------------------------------------------
+
 def count_parameters(model: nn.Module) -> int:
     """
-    Count the total number of trainable parameters in a model.
+    Count the total number of trainable parameters in a PyTorch model.
 
     Args:
-        model (nn.Module): PyTorch model.
+        model (nn.Module): Model instance to inspect.
 
     Returns:
-        int: Number of trainable parameters.
+        int: Number of parameters with requires_grad=True.
     """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-# Print model summary 
-def print_model_summary(model: nn.Module) -> None:
-    """
-    Prints a formatted summary of the model architecture and parameter count.
-    """
-    print("=" * 60)
-    print(f"Model: {model.__class__.__name__}")
-    print("=" * 60)
-    print(model)
-    print("=" * 60)
-    print(f"Total trainable parameters: {count_parameters(model):,}")
-    print("=" * 60)
 
+# --------------------------------------------------
 # Optimizer factory
+# --------------------------------------------------
+
 def get_optimizer(
     model: nn.Module,
     optimizer_name: str = "adam",
@@ -89,17 +99,22 @@ def get_optimizer(
     momentum: float = 0.9,
 ) -> torch.optim.Optimizer:
     """
-    Factory function to create an optimizer.
+    Create and configure a PyTorch optimizer.
+
+    Supported optimizers:
+    - Adam
+    - AdamW
+    - SGD (with momentum)
 
     Args:
-        model: PyTorch model containing parameters to optimize.
-        optimizer_name: 'adam', 'adamw', or 'sgd'.
-        learning_rate: Learning rate.
-        weight_decay: L2 regularization factor.
-        momentum: Momentum factor (only for SGD).
+        model (nn.Module): Model whose parameters will be optimized.
+        optimizer_name (str): Optimizer identifier ('adam', 'adamw', 'sgd').
+        learning_rate (float): Learning rate.
+        weight_decay (float): Weight decay (L2 regularization).
+        momentum (float): Momentum value (SGD only).
 
     Returns:
-        torch.optim.Optimizer: Configured optimizer.
+        torch.optim.Optimizer: Instantiated optimizer.
     """
     optimizers = {
         "adam": lambda: torch.optim.Adam(
@@ -109,20 +124,26 @@ def get_optimizer(
             model.parameters(), lr=learning_rate, weight_decay=weight_decay
         ),
         "sgd": lambda: torch.optim.SGD(
-            model.parameters(), lr=learning_rate, momentum=momentum,
-            weight_decay=weight_decay
+            model.parameters(),
+            lr=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
         ),
     }
 
     name = optimizer_name.lower()
     if name not in optimizers:
         raise ValueError(
-            f"Unknown optimizer: {name}. Available: {list(optimizers.keys())}"
+            f"Unknown optimizer: {name}. Available options: {list(optimizers.keys())}"
         )
 
     return optimizers[name]()
 
+
+# --------------------------------------------------
 # Scheduler factory
+# --------------------------------------------------
+
 def get_scheduler(
     optimizer: torch.optim.Optimizer,
     scheduler_name: str = "cosine",
@@ -130,29 +151,36 @@ def get_scheduler(
     **kwargs,
 ) -> Any:
     """
-    Factory function to create a learning rate scheduler.
+    Create a learning rate scheduler for a given optimizer.
+
+    Supported schedulers:
+    - StepLR
+    - CosineAnnealingLR
+    - ReduceLROnPlateau (min or max mode)
+    - ExponentialLR
 
     Args:
-        optimizer: The optimizer to schedule.
-        scheduler_name: 'step', 'cosine', 'plateau' (or 'reduce_lr_on_plateau'), 'exponential'.
-        epochs: Total epochs (used for CosineAnnealing).
-        **kwargs: Extra arguments like patience, factor, etc.
+        optimizer (torch.optim.Optimizer): Optimizer to schedule.
+        scheduler_name (str): Scheduler identifier.
+        epochs (int): Total training epochs (used by cosine scheduler).
+        **kwargs: Scheduler-specific parameters such as patience, factor, gamma.
 
     Returns:
-        LR Scheduler object.
+        Learning rate scheduler instance.
     """
-    # Common settings for ReduceLROnPlateau if not provided in kwargs
     patience = kwargs.get("patience", 10)
     factor = kwargs.get("factor", 0.1)
 
     schedulers = {
         "step": lambda: torch.optim.lr_scheduler.StepLR(
-            optimizer, step_size=kwargs.get("step_size", 30), gamma=kwargs.get("gamma", 0.1)
+            optimizer,
+            step_size=kwargs.get("step_size", 30),
+            gamma=kwargs.get("gamma", 0.1),
         ),
         "cosine": lambda: torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=epochs
         ),
-       "reduce_lr_on_plateau": lambda: torch.optim.lr_scheduler.ReduceLROnPlateau(
+        "reduce_lr_on_plateau": lambda: torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="min", factor=factor, patience=patience
         ),
         "plateau": lambda: torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -166,20 +194,29 @@ def get_scheduler(
     name = scheduler_name.lower()
     if name not in schedulers:
         raise ValueError(
-            f"Unknown scheduler: {name}. Available: {list(schedulers.keys())}"
+            f"Unknown scheduler: {name}. Available options: {list(schedulers.keys())}"
         )
 
     return schedulers[name]()
 
 
+# --------------------------------------------------
+# Training environment setup
+# --------------------------------------------------
+
 def prepare_for_training(seed: int = 42) -> torch.device:
     """
-    Full setup wrapper for training scripts:
-    1. Sets random seed.
-    2. Selects the appropriate computation device.
+    Convenience wrapper to prepare the training environment.
+
+    This function:
+    1. Sets global random seeds for reproducibility.
+    2. Automatically selects the best available computation device.
+
+    Args:
+        seed (int): Random seed value.
 
     Returns:
-        torch.device: The device to be used for training.
+        torch.device: Device to be used for training.
     """
     set_seed(seed)
     device = get_device()

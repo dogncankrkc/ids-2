@@ -45,10 +45,8 @@ def map_to_separate_attacks(label: str) -> str:
     if label == 'NAN' or label == '':
         return 'Other'
     
-    # --- DEĞİŞİKLİK BURADA: BENIGN -> OTHER (ÇÖPE GİDER) ---
     if 'BENIGN' in label:
         return 'Other' 
-    # -------------------------------------------------------
     
     if 'DDOS' in label:
         return 'DDoS'
@@ -84,7 +82,6 @@ def main():
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
 
-    # Benign yok, sadece saldırılar
     collected = {
         'DDoS': 0,
         'DoS': 0,
@@ -114,7 +111,6 @@ def main():
 
         chunk["multiclass_label"] = chunk[label_col].apply(map_to_separate_attacks)
         
-        # 'Other' (Benign dahil) olanları atıyoruz
         chunk = chunk[chunk["multiclass_label"] != "Other"]
         
         for feat in SELECTED_FEATURES:

@@ -1,18 +1,19 @@
 """
-Visualization Utilities (IDS Version – Numerical Features)
+Visualization Utilities for IDS (Numerical Features)
 
-Only includes relevant functions for network intrusion detection:
-    ✔ Training & validation curves
-    ✔ Learning rate visualization
-    ✔ Confusion matrix heatmap
+This module provides visualization helpers specifically designed for
+Intrusion Detection System (IDS) experiments on numerical feature sets.
+
+Included visualizations:
+- Training and validation loss / accuracy curves
+- Learning rate evolution across epochs
+- Confusion matrix visualization (raw or normalized)
 """
 
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
-import torch
-from torch.utils.data import DataLoader
 
 
 def plot_training_history(
@@ -21,32 +22,39 @@ def plot_training_history(
     figsize: Tuple[int, int] = (12, 4),
 ) -> None:
     """
-    Plot training history (loss and accuracy curves).
+    Plot training and validation performance curves.
+
+    This function visualizes:
+    - Training vs validation loss
+    - Training vs validation accuracy
+
+    It expects a history dictionary produced by the training loop.
 
     Args:
-        history: Dictionary containing training metrics
-        save_path: Path to save the figure (optional)
-        figsize: Figure size
+        history (Dict[str, List[float]]): Dictionary containing metric history
+            (e.g., 'train_loss', 'val_loss', 'train_acc', 'val_acc').
+        save_path (str, optional): File path to save the plot image.
+        figsize (Tuple[int, int]): Size of the matplotlib figure.
     """
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    # Plot loss
+    # Loss curves
     axes[0].plot(history.get("train_loss", []), label="Train Loss")
     if "val_loss" in history:
-        axes[0].plot(history["val_loss"], label="Val Loss")
+        axes[0].plot(history["val_loss"], label="Validation Loss")
     axes[0].set_xlabel("Epoch")
     axes[0].set_ylabel("Loss")
-    axes[0].set_title("Training and Validation Loss")
+    axes[0].set_title("Training vs Validation Loss")
     axes[0].legend()
     axes[0].grid(True)
 
-    # Plot accuracy
+    # Accuracy curves
     axes[1].plot(history.get("train_acc", []), label="Train Accuracy")
     if "val_acc" in history:
-        axes[1].plot(history["val_acc"], label="Val Accuracy")
+        axes[1].plot(history["val_acc"], label="Validation Accuracy")
     axes[1].set_xlabel("Epoch")
     axes[1].set_ylabel("Accuracy (%)")
-    axes[1].set_title("Training and Validation Accuracy")
+    axes[1].set_title("Training vs Validation Accuracy")
     axes[1].legend()
     axes[1].grid(True)
 
@@ -54,6 +62,7 @@ def plot_training_history(
 
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
+
     plt.show()
 
 
@@ -67,24 +76,25 @@ def plot_confusion_matrix(
     show_percent: bool = False,
 ) -> None:
     """
-    Plots a confusion matrix.
+    Visualize a confusion matrix as a heatmap.
+
+    Supports both raw counts and row-normalized representations.
 
     Args:
-        cm (np.ndarray): Confusion matrix (NxN).
-        class_names (List[str], optional): Class labels.
-        save_path (str, optional): Path to save the figure.
-        figsize (Tuple[int, int]): Figure size.
-        cmap (str): Matplotlib colormap.
-        normalize (bool): If True, row-normalize values.
-        show_percent (bool): If True and normalize=True, show percentages (0–100).
+        cm (np.ndarray): Confusion matrix of shape [N, N].
+        class_names (List[str], optional): Names of the classes.
+        save_path (str, optional): File path to save the figure.
+        figsize (Tuple[int, int]): Size of the matplotlib figure.
+        cmap (str): Colormap used for visualization.
+        normalize (bool): If True, normalize rows to sum to 1.
+        show_percent (bool): If True and normalize=True, display values as percentages.
     """
-
     num_classes = cm.shape[0]
 
     if class_names is None:
         class_names = [str(i) for i in range(num_classes)]
 
-    # ---------------- Normalization ----------------
+    # Normalize confusion matrix if requested
     if normalize:
         cm_float = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-9)
         title = "Normalized Confusion Matrix"
@@ -95,14 +105,12 @@ def plot_confusion_matrix(
         cm_float = cm
         title = "Confusion Matrix"
         fmt = "d"
-    # ------------------------------------------------
 
     fig, ax = plt.subplots(figsize=figsize)
-
     im = ax.imshow(cm_float, interpolation="nearest", cmap=cmap)
 
     if normalize:
-        im.set_clim(0., 100. if show_percent else 1.)
+        im.set_clim(0.0, 100.0 if show_percent else 1.0)
 
     ax.figure.colorbar(im, ax=ax)
 
@@ -116,16 +124,25 @@ def plot_confusion_matrix(
         title=title,
     )
 
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    plt.setp(
+        ax.get_xticklabels(),
+        rotation=45,
+        ha="right",
+        rotation_mode="anchor",
+    )
 
+    # Annotate each cell with its value
     thresh = cm_float.max() / 2.0
     for i in range(num_classes):
         for j in range(num_classes):
             ax.text(
-                j, i, format(cm_float[i, j], fmt),
-                ha="center", va="center",
+                j,
+                i,
+                format(cm_float[i, j], fmt),
+                ha="center",
+                va="center",
                 color="white" if cm_float[i, j] > thresh else "black",
-                fontsize=10
+                fontsize=10,
             )
 
     plt.tight_layout()
@@ -143,12 +160,14 @@ def plot_learning_rate(
     figsize: Tuple[int, int] = (10, 4),
 ) -> None:
     """
-    Plot learning rate schedule.
+    Plot the learning rate evolution over training epochs.
+
+    Useful for diagnosing scheduler behavior and learning dynamics.
 
     Args:
-        history: Dictionary containing learning rate history
-        save_path: Path to save the figure (optional)
-        figsize: Figure size
+        history (Dict[str, List[float]]): Training history containing 'lr' values.
+        save_path (str, optional): File path to save the plot image.
+        figsize (Tuple[int, int]): Size of the matplotlib figure.
     """
     if "lr" not in history:
         print("No learning rate history found")
@@ -164,4 +183,5 @@ def plot_learning_rate(
 
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
+
     plt.show()

@@ -1,5 +1,9 @@
 """
-Setup script for IDS CNN Model Package
+Package Setup Script for IDS CNN Model
+
+This setup script defines packaging, dependencies, and metadata for the
+lightweight CNN-based Intrusion Detection System (IDS) model.
+It enables installation via pip and supports development extras.
 """
 
 from setuptools import setup, find_packages
@@ -21,12 +25,12 @@ setup(
     version="0.1.1",
     author="Dogancan Karakoc",
     author_email="dogncankrkc@gmail.com",
-    description="Lightweight CNN model for network intrusion detection (binary + multiclass)",
+    description="Lightweight CNN model for network intrusion detection (multiclass)",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/dogncankrkc/ids-1",   
-    packages=find_packages(where="src"),          
-    package_dir={"": "src"},                       
+    url="https://github.com/dogncankrkc/ids-2",
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
