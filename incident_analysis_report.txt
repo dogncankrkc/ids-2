@@ -1,0 +1,1 @@
+[HATA] Agent cagrisi basarisiz oldu: 'str' object has no attribute 'model_copy'
