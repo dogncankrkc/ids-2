@@ -12,7 +12,6 @@ from .metrics import (
     precision,
     recall,
     f1_score,
-    confusion_matrix,  # <-- YENİ EKLENDİ
 )
 
 __all__ = [
@@ -21,5 +20,4 @@ __all__ = [
     "precision",
     "recall",
     "f1_score",
-    "confusion_matrix",
 ]

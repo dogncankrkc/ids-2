@@ -30,7 +30,7 @@ training:
 
 checkpoint:
   # Directory to save checkpoints
-  save_dir: "models/checkpoints/ids_nano_focal_groupNorm_gan"
+  save_dir: "models/checkpoints/ids_smote_focal"
 
 logging:
   verbose: true

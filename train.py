@@ -122,7 +122,7 @@ def create_ids_loaders(batch_size: int, num_workers: int = 0):
     # Preprocessing (split, scaling, encoding; optional SMOTE inside)
     # --------------------------------------------------------
     # This function performs all preprocessing steps in a leak-free manner.
-    X_train, X_val, X_test, y_train, y_val, y_test = preprocess_multiclass(df)
+    X_train, X_val, X_test, y_train, y_val, y_test = preprocess_multiclass(df, augmentation="smote")
 
     print("[INFO] Multiclass preprocessing completed.")
     print(f"[INFO] Feature count per sample (L): {X_train.shape[1]}")

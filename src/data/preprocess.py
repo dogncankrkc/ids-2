@@ -12,6 +12,7 @@ import torch
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, RobustScaler
+from imblearn.over_sampling import SMOTE
 
 # --------------------------------------------------
 # CONFIG & PATHS
@@ -41,7 +42,7 @@ def _save_split(X, y, name):
     df.to_csv(path, index=False)
     print(f"   [SAVE] {name:<15} -> {path} | Rows: {len(df):,}")
 
-def preprocess_multiclass(df_real: pd.DataFrame):
+def preprocess_multiclass(df_real: pd.DataFrame, augmentation = "gan"):
     print("\n" + "="*60)
     print("🚀 PREPROCESSING STARTED (REPORTING MODE)")
     print("="*60)
@@ -97,11 +98,11 @@ def preprocess_multiclass(df_real: pd.DataFrame):
     _save_split(X_test,  y_test,  "test")
 
     # -------------------------------------------------------
-    # 4. GAN AUGMENTATION (SMART STRATEGY)
+    # 4. DATA AUGMENTATION (GAN / SMOTE / NONE)
     # -------------------------------------------------------
-    print(f"\n[STEP 4] GAN Augmentation Strategy (k=2 Ratio)")
+    print(f"\n[STEP 4] Data Augmentation Strategy: {augmentation.upper()}")
     
-    if os.path.exists(GAN_DATA_PATH):
+    if augmentation == "gan" and os.path.exists(GAN_DATA_PATH):
         df_gan = pd.read_csv(GAN_DATA_PATH)
         X_gan = scaler.transform(df_gan[SELECTED_FEATURES].values)
         y_gan = encoder.transform(df_gan[label_col].values)
@@ -161,9 +162,45 @@ def preprocess_multiclass(df_real: pd.DataFrame):
             print(f"\n   [RESULT] Augmentation Complete. Train Set Size: {len(X_train):,}")
         else:
             print("\n   [RESULT] No Augmentation performed.")
+    
+    elif augmentation == "smote":
+        print("   -> Using SMOTE-based augmentation (GAN-equivalent targets)")
+
+        unique, counts = np.unique(y_train, return_counts=True)
+        max_real_count = max(counts)
+
+        HARD_CAP = 45000
+        RATIO_CAP = 2
+
+        sampling_strategy = {}
+
+        print("\n   --- SMOTE Target Strategy ---")
+        for cls_idx, real_count in zip(unique, counts):
+            cls_name = encoder.inverse_transform([cls_idx])[0]
+
+            target_max = min(max_real_count, HARD_CAP)
+            ratio_limit = int(real_count * (1 + RATIO_CAP))
+            final_target = min(target_max, ratio_limit)
+
+            if real_count < final_target:
+                sampling_strategy[cls_idx] = final_target
+                print(f"   {cls_name:<20} | Real: {real_count:<10} -> Target: {final_target}")
+
+        if sampling_strategy:
+            smote = SMOTE(
+                sampling_strategy=sampling_strategy,
+                k_neighbors = min(5, real_count - 1),
+                random_state=42
+            )
+
+            X_train, y_train = smote.fit_resample(X_train, y_train)
+
+            print(f"\n   [RESULT] SMOTE augmentation complete. Train size: {len(X_train):,}")
+        else:
+            print("   [RESULT] No SMOTE augmentation needed.")
 
     else:
-        print(f"\n   [WARN] GAN file not found at {GAN_DATA_PATH}. Skipping augmentation.")
+        print(f"\n   [STEP 4] No augmentation selected or GAN data not found. Skipping augmentation.")
 
     # -------------------------------------------------------
     # 5. FINAL SAVE
