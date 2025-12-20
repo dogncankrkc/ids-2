@@ -1,0 +1,77 @@
+dataset:
+  test_path: data/processed/real_world_test_v1/test_raw.csv
+  n_total: 238144
+  n_benign: 157577
+  n_attack: 80567
+stage_1_gatekeeper:
+  model: XGBoost
+  threshold: 0.5500000000000002
+  precision: 0.8819901668689692
+  recall: 0.8928717713207641
+  f1: 0.8873976117635448
+  roc_auc: 0.9722747411885999
+  forwarded_all_predicted_attacks: 81561
+  forwarded_true_attacks_only: 71936
+stage_2_specialist:
+  evaluated_on: True attacks that were forwarded by Stage-1 (TP subset).
+  conditional_macro_f1: 0.8007693605496498
+  conditional_macro_precision: 0.7955341577849905
+  conditional_macro_recall: 0.8218094850073331
+  forwarded_true_attacks: 71936
+  total_true_attacks: 80567
+cascade_end_to_end:
+  accuracy: 0.881701827465735
+  macro_f1: 0.7114557442087861
+  micro_f1: 0.881701827465735
+  macro_precision: 0.7078668597499657
+  macro_recall: 0.7329963319996371
+  attack_false_negative_rate: 0.10712822867923591
+  attack_false_negatives: 8631
+per_class_breakdown:
+  Benign:
+    precision: 0.944879073718092
+    recall: 0.9389187508329261
+    f1: 0.9418894830659537
+    support: 157577
+  BruteForce:
+    precision: 0.3287950987066031
+    recall: 0.4989669421487603
+    f1: 0.3963890028723841
+    support: 1936
+  DDoS:
+    precision: 0.908176330711542
+    recall: 0.6582698044414982
+    f1: 0.7632883661939353
+    support: 15085
+  DoS:
+    precision: 0.7286053255997891
+    recall: 0.9319484723814663
+    f1: 0.8178267045454546
+    support: 14827
+  Mirai:
+    precision: 0.9984185556141276
+    recall: 0.9992086520706938
+    f1: 0.9988134475939354
+    support: 15164
+  Recon:
+    precision: 0.5882919599851797
+    recall: 0.5286323078971901
+    f1: 0.5568687966892295
+    support: 15018
+  Spoofing:
+    precision: 0.8692941746900326
+    recall: 0.8362206823027718
+    f1: 0.8524367464764816
+    support: 15008
+  Web:
+    precision: 0.296474358974359
+    recall: 0.4718050439217909
+    f1: 0.3641334062329142
+    support: 3529
+artifacts:
+  cm_stage1_binary_counts: cm_1_stage1_binary_counts.png
+  cm_stage1_binary_normalized: cm_1_stage1_binary_normalized.png
+  cm_stage2_attack_only_counts: cm_2_stage2_attack_only_counts.png
+  cm_stage2_attack_only_normalized: cm_2_stage2_attack_only_normalized.png
+  cm_cascade_counts: cm_3_cascade_end_to_end_counts.png
+  cm_cascade_normalized: cm_3_cascade_end_to_end_normalized.png
