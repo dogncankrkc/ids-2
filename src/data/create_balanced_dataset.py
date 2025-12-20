@@ -1,11 +1,14 @@
 """
-FINAL DATASET CREATOR – CIC-IoT-2023 (SEPARATE ATTACKS ONLY)
+FINAL DATASET CREATOR – CIC-IoT-2023 (BENIGN + SEPARATE ATTACKS)
 
 Purpose:
-1. Read huge raw CSV.
-2. Map raw labels to 7 DISTINCT ATTACK CLASSES (DoS & DDoS separated).
-3. DROP BENIGN traffic completely.
-4. Cap large attacks at 100k, keep small attacks as is.
+1. Read huge raw CSV (chunk-based).
+2. Map raw labels to 7 DISTINCT ATTACK CLASSES.
+3. KEEP BENIGN traffic (for Binary IDS).
+4. Create:
+   - binary_label   : 0 = Benign, 1 = Attack
+   - multiclass_label: Benign or specific attack type
+5. Cap large attack classes, keep benign realistic.
 """
 
 import os
@@ -18,12 +21,12 @@ import argparse
 # ============================
 
 DEFAULT_INPUT = "data/raw/CIC2023_FULL_MERGED.csv"
-DEFAULT_OUTPUT = "data/processed/CIC2023_SEPARATE_ATTACK_ONLY.csv"
+DEFAULT_OUTPUT = "data/processed/CIC2023_BINARY_AND_ATTACK_MAPPED.csv"
 
 CHUNK_SIZE = 1_000_000
 
-# Sadece saldırı limiti var. Benign yok.
-ATTACK_CAP = 100_000 
+ATTACK_CAP = 100_000      # per attack class
+BENIGN_CAP = None         # None = keep all benign (binary preprocess will downsample)
 
 SELECTED_FEATURES = [
     'Header_Length', 'Protocol Type', 'Time_To_Live', 'Rate',
@@ -37,39 +40,40 @@ SELECTED_FEATURES = [
 ]
 
 # ============================
-# LABEL MAPPING (ATTACKS ONLY)
+# LABEL MAPPING
 # ============================
 def map_to_separate_attacks(label: str) -> str:
     label = str(label).strip().upper()
 
     if label == 'NAN' or label == '':
-        return 'Other'
-    
+        return 'Benign'
+
     if 'BENIGN' in label:
-        return 'Other' 
-    
+        return 'Benign'
+
     if 'DDOS' in label:
         return 'DDoS'
-    
+
     if 'DOS' in label:
         return 'DoS'
-        
+
     if any(x in label for x in ['RECON', 'VULNERABILITY', 'PING', 'PORTSCAN', 'OSSCAN', 'HOSTDISCOVERY']):
         return 'Recon'
-        
+
     if any(x in label for x in ['XSS', 'SQL', 'UPLOAD', 'BROWSER', 'COMMAND', 'BACKDOOR', 'MALWARE']):
         return 'Web'
-        
+
     if 'BRUTEFORCE' in label or 'DICTIONARY' in label:
         return 'BruteForce'
-        
+
     if 'SPOOFING' in label or 'MITM' in label:
         return 'Spoofing'
-        
+
     if 'MIRAI' in label:
         return 'Mirai'
-        
-    return 'Other'
+
+    return 'Benign'
+
 
 # ============================
 # MAIN GENERATOR
@@ -82,20 +86,22 @@ def main():
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
 
-    collected = {
+    collected_attacks = {
         'DDoS': 0,
         'DoS': 0,
         'Recon': 0,
-        'Web': 0, 
-        'BruteForce': 0, 
-        'Spoofing': 0, 
+        'Web': 0,
+        'BruteForce': 0,
+        'Spoofing': 0,
         'Mirai': 0
     }
-    
+
+    benign_collected = 0
     chunks_to_save = []
 
-    print(f"[INFO] Creating SEPARATE ATTACK-ONLY dataset...")
-    print(f"[INFO] Attack Cap: {ATTACK_CAP}")
+    print("[INFO] Creating BENIGN + SEPARATE ATTACK dataset")
+    print(f"[INFO] Attack cap per class: {ATTACK_CAP}")
+    print("[INFO] Benign kept realistic (no cap here)")
 
     for i, chunk in enumerate(pd.read_csv(args.input, chunksize=CHUNK_SIZE)):
         print(f" -> Processing chunk {i+1}", end="\r")
@@ -105,52 +111,68 @@ def main():
             if col in chunk.columns:
                 label_col = col
                 break
-        
         if label_col is None:
             continue
 
         chunk["multiclass_label"] = chunk[label_col].apply(map_to_separate_attacks)
-        
-        chunk = chunk[chunk["multiclass_label"] != "Other"]
-        
+        chunk["binary_label"] = (chunk["multiclass_label"] != "Benign").astype(int)
+
         for feat in SELECTED_FEATURES:
             if feat not in chunk.columns:
                 chunk[feat] = 0
-                
-        chunk = chunk[SELECTED_FEATURES + ["multiclass_label"]]
+
+        chunk = chunk[SELECTED_FEATURES + ["binary_label", "multiclass_label"]]
         chunk.replace([np.inf, -np.inf], np.nan, inplace=True)
         chunk.dropna(inplace=True)
 
-        for cls, group in chunk.groupby("multiclass_label"):
-            cap = ATTACK_CAP
-            
-            current_count = collected.get(cls, 0)
-            if current_count >= cap:
+        # ---------------------------
+        # BENIGN
+        # ---------------------------
+        benign_chunk = chunk[chunk["binary_label"] == 0]
+        if BENIGN_CAP is None or benign_collected < BENIGN_CAP:
+            chunks_to_save.append(benign_chunk)
+            benign_collected += len(benign_chunk)
+
+        # ---------------------------
+        # ATTACKS
+        # ---------------------------
+        attack_chunk = chunk[chunk["binary_label"] == 1]
+        for cls, group in attack_chunk.groupby("multiclass_label"):
+            if cls == "Benign":
                 continue
 
-            needed = cap - current_count
-            take = group.head(needed)
-            
-            chunks_to_save.append(take)
-            collected[cls] += len(take)
+            current = collected_attacks.get(cls, 0)
+            if current >= ATTACK_CAP:
+                continue
 
-        if all(val >= ATTACK_CAP for key, val in collected.items()):
-            print(f"\n[INFO] All caps reached at chunk {i+1}. Stopping early.")
+            needed = ATTACK_CAP - current
+            take = group.head(needed)
+
+            chunks_to_save.append(take)
+            collected_attacks[cls] += len(take)
+
+        if all(v >= ATTACK_CAP for v in collected_attacks.values()):
+            print(f"\n[INFO] All attack caps reached at chunk {i+1}.")
             break
 
-    print("\n[INFO] Concatenating and saving...")
+    print("\n[INFO] Concatenating and saving final dataset...")
+
     if not chunks_to_save:
-        print("[ERROR] No data collected!")
+        print("[ERROR] No data collected.")
         return
 
     df_final = pd.concat(chunks_to_save, ignore_index=True)
     df_final = df_final.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    print("\n[FINAL DISTRIBUTION - ATTACK ONLY (SEPARATE)]")
+    print("\n[FINAL DISTRIBUTION]")
+    print("Binary:")
+    print(df_final["binary_label"].value_counts())
+    print("\nMulticlass:")
     print(df_final["multiclass_label"].value_counts())
 
     df_final.to_csv(args.output, index=False)
     print(f"\n[SUCCESS] Dataset saved to: {args.output}")
+
 
 if __name__ == "__main__":
     main()

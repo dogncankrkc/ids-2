@@ -1,0 +1,171 @@
+# ============================================================
+# Binary IDS Configuration
+# Hierarchical IDS – Stage 1 (Benign vs Attack)
+# ============================================================
+
+experiment:
+  name: "binary_ids_benchmark_v1"
+  description: >
+    Binary IDS benchmark for hierarchical IDS pipeline.
+    Goal: ultra-fast attack detection on edge devices (Raspberry Pi 4).
+    Models are compared under identical preprocessing and splits.
+
+# ============================================================
+# DATA CONFIGURATION
+# ============================================================
+
+data:
+  input_path: "data/processed/CIC2023_BINARY_AND_ATTACK_MAPPED.csv"
+  label_column: "binary_label"        # benign / attack (generated in preprocess)
+  benign_label: 0
+  attack_label: 1
+
+  sampling:
+    benign_max: 1000000               # 1M benign
+    attack_max: 250000                # ~250k total attacks
+    per_attack_class_cap: 100000      # cap per attack type before merge
+    random_state: 42
+
+  augmentation:
+    enabled: true
+    method: "gan"                     # gan | smote | none
+    gan_path: "data/processed/GAN_SYNTHETIC_ONLY.csv"
+    gan_max_per_class: 100000
+    gan_only_for_minor_classes: true
+
+  split:
+    train: 0.70
+    val: 0.15
+    test: 0.15
+    stratified: true
+
+  scaling:
+    method: "robust"                  # robust | standard | none
+    fit_on: "train_only"
+
+# ============================================================
+# BINARY MODELS TO EVALUATE
+# ============================================================
+
+models:
+
+  catboost:
+    enabled: true
+    type: "catboost"
+    params:
+      scale_pos_weight: 6.0
+      iterations: 500
+      depth: 8
+      learning_rate: 0.05
+      loss_function: "Logloss"
+      eval_metric: "AUC"
+      verbose: 0
+      random_seed: 42
+
+  logistic_regression:
+    enabled: true
+    type: "logistic_regression"
+    params:
+      max_iter: 1000
+      class_weight: "balanced"
+      solver: "saga"
+      n_jobs: -1
+
+  decision_tree:
+    enabled: true
+    type: "decision_tree"
+    params:
+      max_depth: 12
+      min_samples_leaf: 50
+      class_weight: "balanced"
+      random_state: 42
+
+  random_forest:
+    enabled: true
+    type: "random_forest"
+    params:
+      n_estimators: 200
+      max_depth: 16
+      min_samples_leaf: 20
+      n_jobs: -1
+      class_weight: "balanced"
+      random_state: 42
+
+  xgboost:
+    enabled: true
+    type: "xgboost"
+    params:
+      scale_pos_weight: 6.0
+      n_estimators: 300
+      max_depth: 6
+      learning_rate: 0.1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      objective: "binary:logistic"
+      eval_metric: "logloss"
+      tree_method: "hist"
+      n_jobs: -1
+      random_state: 42
+
+  lightgbm:
+    enabled: true
+    type: "lightgbm"
+    params:
+      scale_pos_weight: 6.0
+      n_estimators: 300
+      num_leaves: 64
+      max_depth: -1
+      learning_rate: 0.05
+      subsample: 0.8
+      colsample_bytree: 0.8
+      objective: "binary"
+      class_weight: "balanced"
+      n_jobs: -1
+      random_state: 42
+
+# ============================================================
+# EVALUATION CONFIGURATION
+# ============================================================
+
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - roc_auc
+    - inference_time_ms
+    - samples_per_sec
+
+  threshold:
+    default: 0.5
+    tune: true                         # threshold sweep on validation
+    range: [0.1, 0.9]
+    step: 0.05
+    optimize_for: "f2"             # IDS için kritik
+
+# ============================================================
+# OUTPUT & LOGGING
+# ============================================================
+
+output:
+  base_dir: "models/checkpoints/binary_ids"
+  save_models: true
+  save_predictions: true
+  save_metrics_yaml: true
+  save_confusion_matrix: true
+  save_latency_report: true
+
+logging:
+  verbose: true
+  log_interval: 1
+  save_console_log: true
+
+# ============================================================
+# RUNTIME TARGETS (EDGE AWARENESS)
+# ============================================================
+
+edge_constraints:
+  target_device: "raspberry_pi_4"
+  max_inference_time_ms: 1.0
+  max_model_size_mb: 50

@@ -14,7 +14,10 @@ from .preprocess import (
     preprocess_single_sample, 
 )
 
+from .preprocess_binary import (preprocess_binary)
+
 __all__ = [
     "preprocess_multiclass",
     "preprocess_single_sample",
+    "preprocess_binary",
 ]

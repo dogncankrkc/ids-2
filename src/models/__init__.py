@@ -7,8 +7,10 @@ Exports:
 """
 
 from .cnn_model import ResNet1D_Nano_Prime, create_ids_model
+from .binary_models import create_binary_model
 
 __all__ = [
     "ResNet1D_Nano_Prime",
     "create_ids_model",
+    "create_binary_model",
 ]
