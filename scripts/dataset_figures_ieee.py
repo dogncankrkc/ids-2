@@ -1,22 +1,37 @@
 """
-Dataset Visualization Script (IEEE Style)
+Dataset Visualization Script (IEEE-Compliant)
 
 Figures:
 Fig.1 - Original Raw Dataset Distribution (Fine-grained labels)
 Fig.2 - Raw Dataset Mapped to 7 Classes
 Fig.3 - Training Distribution with GAN Augmentation (Real vs GAN)
 
-Notes:
-- NO titles (IEEE style)
-- High DPI
-- Colorblind-friendly
+IEEE Rules Applied:
+- NO titles (captions used in paper)
+- High DPI (300)
+- Plain background (no seaborn styling artifacts)
+- Colorblind-friendly colors
+- Log-scale for imbalanced distributions
 """
 
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 from collections import Counter
+
+# =============================
+# GLOBAL IEEE STYLE
+# =============================
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman"],
+    "font.size": 11,
+    "axes.labelsize": 11,
+    "xtick.labelsize": 10,
+    "ytick.labelsize": 10,
+    "figure.dpi": 300,
+    "axes.grid": False
+})
 
 # =============================
 # PATHS
@@ -65,11 +80,17 @@ def plot_raw_distribution():
         label_col = "label" if "label" in chunk.columns else "multiclass_label"
         counts.update(chunk[label_col].value_counts().to_dict())
 
-    df = pd.DataFrame(counts.items(), columns=["Attack Type", "Count"])
-    df = df.sort_values("Count", ascending=False)
+    df = (
+        pd.DataFrame(counts.items(), columns=["Attack Type", "Count"])
+        .sort_values("Count", ascending=False)
+    )
 
     plt.figure(figsize=(8, 6))
-    sns.barplot(x="Count", y="Attack Type", data=df, color="#4C72B0")
+    plt.barh(
+        df["Attack Type"],
+        df["Count"],
+        color="#4C72B0"
+    )
     plt.xscale("log")
     plt.xlabel("Sample Count (log scale)")
     plt.ylabel("Attack Type")
@@ -86,8 +107,7 @@ def plot_raw_7class_distribution():
 
     for chunk in pd.read_csv(RAW_DATA_PATH, chunksize=1_000_000):
         label_col = "label" if "label" in chunk.columns else "multiclass_label"
-        mapped = chunk[label_col].apply(map_to_7class)
-        mapped = mapped.dropna()
+        mapped = chunk[label_col].apply(map_to_7class).dropna()
         counts.update(mapped.value_counts().to_dict())
 
     df = pd.DataFrame(counts.items(), columns=["Class", "Count"])
@@ -95,7 +115,11 @@ def plot_raw_7class_distribution():
     df = df.sort_values("Class")
 
     plt.figure(figsize=(6, 4))
-    sns.barplot(x="Count", y="Class", data=df, color="#55A868")
+    plt.barh(
+        df["Class"],
+        df["Count"],
+        color="#55A868"
+    )
     plt.xscale("log")
     plt.xlabel("Sample Count (log scale)")
     plt.ylabel("Attack Category")
@@ -109,25 +133,19 @@ def plot_raw_7class_distribution():
 def plot_gan_augmentation():
     print("[FIG3] Visualizing GAN augmentation...")
 
-    # Load datasets
     df_real = pd.read_csv(PURE_REAL_TRAIN_PATH)
     df_final = pd.read_csv(FINAL_TRAIN_PATH)
 
-    # Count encoded labels (0–6)
     real_counts = df_real["label"].value_counts().sort_index()
     final_counts = df_final["label"].value_counts().sort_index()
 
-    # Ensure all classes exist
-    all_classes = sorted(set(final_counts.index) | set(real_counts.index))
-
+    all_classes = sorted(set(real_counts.index) | set(final_counts.index))
     real_counts = real_counts.reindex(all_classes, fill_value=0)
     final_counts = final_counts.reindex(all_classes, fill_value=0)
 
-    # GAN contribution
     gan_counts = final_counts - real_counts
     gan_counts[gan_counts < 0] = 0
 
-    # Map index → class names
     idx_to_class = {
         0: "BruteForce",
         1: "DDoS",
@@ -140,9 +158,13 @@ def plot_gan_augmentation():
 
     class_names = [idx_to_class[i] for i in all_classes]
 
-    # Plot
     plt.figure(figsize=(7, 4))
-    plt.barh(class_names, real_counts.values, label="Real", color="#4C72B0")
+    plt.barh(
+        class_names,
+        real_counts.values,
+        label="Real",
+        color="#4C72B0"
+    )
     plt.barh(
         class_names,
         gan_counts.values,
@@ -151,19 +173,20 @@ def plot_gan_augmentation():
         color="#DD8452"
     )
 
-    plt.xlabel("Number of Training Samples")
+    plt.xlabel("Number of Training Samples (Real + GAN)")
     plt.ylabel("Attack Category")
     plt.legend(frameon=False)
     plt.tight_layout()
     plt.savefig(f"{SAVE_DIR}/fig3_gan_augmentation.png", dpi=300)
     plt.close()
 
-
 # =============================
 # MAIN
 # =============================
 if __name__ == "__main__":
-    # plot_raw_distribution()
-    # plot_raw_7class_distribution()
+    # Uncomment figures as needed
+    plot_raw_distribution()
+    plot_raw_7class_distribution()
     plot_gan_augmentation()
-    print("[DONE] IEEE-ready dataset figures generated.")
+
+    print("[DONE] IEEE-compliant dataset figures generated.")
