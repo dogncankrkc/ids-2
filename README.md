@@ -1,211 +1,135 @@
-# IDS-CNN: Network Intrusion Detection System
-
-A lightweight CNN-based intrusion detection system that transforms tabular network traffic features into a 2D representation for classification. The system supports both binary (benign vs attack) and multiclass (attack type) detection.
-
----
-
-## 📋 Overview
-
-This project uses a Convolutional Neural Network (CNN) to detect network intrusions from tabular data. 70 carefully selected network features are reshaped into a `(1, 7, 10)` format, allowing the CNN to learn spatial patterns in network traffic behavior.
-
-**Key Features:**
-- Binary classification: Benign vs Attack
-- Multiclass classification: 8 attack categories (DoS, DDoS, Recon, MITM, Bruteforce, Web, Malware)
-- Automatic train/validation/test split
-- Model checkpointing and early stopping
-- Comprehensive metrics (accuracy, precision, recall, F1-score)
-- Easy-to-use configuration files
-
----
-
-## 📁 Project Structure
-
-```bash
-ids-1/
-├── configs/
-│   ├── binary_config.yaml       # Binary classification settings
-│   └── multiclass_config.yaml   # Multiclass classification settings
-│
-├── data/
-│   └── raw/                     # Place your CSV files here
-│
-├── models/
-│   ├── checkpoints/             # Training checkpoints
-│   ├── scaler_binary.pkl        # Feature scaler (binary)
-│   ├── scaler_multi.pkl         # Feature scaler (multiclass)
-│   └── label_encoder.pkl        # Label encoder (multiclass)
-│
-├── outputs/                     # Test results and visualizations
-│
-├── src/
-│   ├── data/                    # Data loading and preprocessing
-│   ├── models/                  # CNN model architecture
-│   ├── training/                # Training loop and metrics
-│   ├── utils/                   # Helper functions
-│   └── testing/                 # Evaluation scripts
-│
-├── notebooks/
-│   └── 01_training_example.ipynb  # Training example
-│
-├── tests/                       # Unit tests
-├── train.py                     # Training script
-├── inference.py                 # Inference script
-└── requirements.txt             # Dependencies
-```
-
----
-
 ## 🚀 Quick Start
 
 ### 1. Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/dogncankrkc/ids-1.git
-cd ids-1
+# IDS (CIC2023) — Intrusion Detection System
 
-# Create virtual environment
+Lightweight project that provides preprocessing, training and inference utilities for network intrusion detection using tabular features and a compact CNN (binary and multiclass workflows).
+
+This repository contains data preparation tools (including a capped + SMOTE pipeline for CIC datasets), training scripts, model code and inference helpers used in the experiments.
+
+---
+
+## Quick summary
+
+- Data: scripts to generate a processed dataset from large raw CSV(s) (see `src/data/create_balanced_dataset.py`).
+- Training: `train.py` (configurable via YAML files in `configs/`).
+- Inference: `scripts/inference.py` demonstrates loading a saved model and running a single-sample prediction.
+- Models and checkpoints are stored under `models/checkpoints/`.
+
+---
+
+## Requirements
+
+- Python 3.8+
+- See `requirements.txt` for required packages. Note that PyTorch is expected but not pinned in the file — install a compatible `torch`/`torchvision` for your platform (CUDA vs CPU / MPS).
+
+Example (macOS / CPU):
+
+```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
+source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
 ```
 
-### 2. Prepare Your Data
+If you intend to use GPU acceleration, install a matching `torch` build before `pip install -r requirements.txt`.
 
-Place your CSV files in the `data/raw/` folder. The system will automatically load and concatenate all CSV files.
+---
 
-**Required columns:**
-- `binary_label`: For binary classification (0 = benign, 1 = attack)
-- `label2`: For multiclass classification (attack type names)
-- 70 network features (see `src/data/preprocess.py` for the complete list)
+## Preparing data
 
-### 3. Train a Model
+Recommended: generate a processed dataset using the provided generator which reads large CSVs in chunks and creates a capped + SMOTE balanced dataset.
 
-**Binary Classification:**
+Run:
+
 ```bash
+python src/data/create_balanced_dataset.py
+```
+
+This writes `data/processed/CIC2023_CAPPED_SMOTE.csv` by default. `train.py` expects a processed CSV at `data/processed/CIC2023_CAPPED_SMOTE.csv` (see `PROCESSED_DATA_PATH` in `train.py`) — either keep that path or edit `train.py` / the data pipeline to point to another processed CSV in `data/processed/`.
+
+The generator also creates `multiclass_label` (8 attack categories) and `binary_label` (Benign=0, Attack=1) columns.
+
+Note: smaller example processed files may already exist under `data/processed/` for testing (inspect that folder before running the full generator).
+
+---
+
+## Training
+
+Training is driven by `train.py` and configurable via YAML config files in `configs/`.
+
+Examples:
+
+```bash
+# Multiclass (default config)
+python train.py --config configs/multiclass_config.yaml --mode multiclass
+
+# Binary (uses binary config)
 python train.py --config configs/binary_config.yaml --mode binary
 ```
 
-**Multiclass Classification:**
+What happens during training:
+- Loads the processed CSV from `data/processed/CIC2023_CAPPED_SMOTE.csv` (or the path you set).
+- Applies preprocessing (`src/data/preprocess.py`) and creates PyTorch DataLoaders.
+- Trains the model defined by `src/models/cnn_model.py` and saves checkpoints to `models/checkpoints/` (checkpoint dir is also configurable in each YAML file).
+
+Configuration highlights:
+- `configs/multiclass_config.yaml` — model hyperparameters, `data.batch_size`, `training.epochs`, `training.learning_rate`, `checkpoint.save_dir`, `data.num_workers`.
+- `configs/binary_config.yaml` — example binary-oriented config (CatBoost settings shown in that file). `train.py` supports both `binary` and `multiclass` modes.
+
+---
+
+## Inference
+
+Use `scripts/inference.py` as a reference for loading a saved model, label encoder and scaler and running a single-sample prediction. Edit the constants at the top of the script to point to your model/scaler/encoder locations.
+
+Run:
+
 ```bash
-python train.py --config configs/multiclass_config.yaml --mode multiclass
+python scripts/inference.py
 ```
 
-The training script will:
-- Load and preprocess your data
-- Split into train/validation/test sets (60/20/20)
-- Train the CNN model
-- Save checkpoints to `models/checkpoints/`
-- Save the final model and training history
+The script demonstrates how to create a dummy packet, preprocess it (via `src/data/preprocess.py`), load a trained model checkpoint and map predicted indices back to class names.
 
-### 4. Run Inference
+---
+
+## Useful files and locations
+
+- `train.py` — training entry point (CLI: `--config`, `--mode`).
+- `src/data/create_balanced_dataset.py` — builds the capped + SMOTE processed CSV from large raw files.
+- `src/data/preprocess.py` — preprocessing utilities and single-sample preprocessing.
+- `src/models/cnn_model.py` — CNN architecture and model factory.
+- `src/training/trainer.py` — training loop, validation, testing utilities.
+- `scripts/inference.py` — example inference flow for a single sample.
+- `configs/` — YAML files for binary and multiclass experiments.
+- `models/checkpoints/` — where checkpoints and final models are saved by default.
+
+---
+
+## Running quick checks
+
+To verify basic environment and script availability, useful commands:
 
 ```bash
-python inference.py
-```
-
-Edit the script to specify:
-- `sample_path`: Path to a single-row CSV file
-- `model_path`: Path to your trained model checkpoint
-
----
-
-## ⚙️ Configuration
-
-Training parameters can be customized in YAML config files:
-
-```yaml
-model:
-  type: "ids_cnn"
-  num_classes: 2          # 2 for binary, 8 for multiclass
-  input_channels: 1
-  input_size: [7, 10]
-
-training:
-  epochs: 40
-  learning_rate: 0.001
-  optimizer: "adam"
-  scheduler: "cosine"
-  early_stopping_patience: 6
+python scripts/print_env_info.py
+python train.py --config configs/multiclass_config.yaml --mode multiclass --help
+python -m pytest -q
 ```
 
 ---
 
-## 📊 Model Architecture
+## Contributing
 
-The CNN model (`IDS_CNN`) consists of:
-- 3 convolutional layers (16 → 32 → 64 filters)
-- MaxPooling and Dropout for regularization
-- 2 fully connected layers
-- Adaptive to both binary and multiclass tasks
-
-**Model size:** < 1M parameters (suitable for edge deployment)
+- Open issues for bugs or feature requests.
+- Keep changes focused and add tests where appropriate.
+- Use `black`, `isort`, `flake8` for style if modifying code.
 
 ---
 
-## 🧪 Testing
+## License & Contact
 
-Run unit tests:
-```bash
-pytest tests/ -v
-```
+MIT License. Maintainer: Doğancan Karakoç — dogncankrkc@gmail.com
 
-Run evaluation on test set:
-```bash
-python -m src.testing.test_ids
-```
-
----
-
-## 📓 Jupyter Notebook
-
-Explore the training process interactively:
-```bash
-jupyter notebook notebooks/01_training_example.ipynb
-```
-
----
-
-## 🔍 Key Files
-
-| File | Description |
-|------|-------------|
-| `src/data/preprocess.py` | Feature selection and preprocessing |
-| `src/models/cnn_model.py` | CNN architecture |
-| `src/training/trainer.py` | Training loop with metrics |
-| `train.py` | Main training script |
-| `inference.py` | Prediction on new samples |
-
----
-
-## 📈 Results
-
-The model outputs are saved in `outputs/` including:
-- Confusion matrices (normalized and counts)
-- Prediction results CSV
-- Training history plots
-
----
-
-## 🤝 Contributing
-
-1. Keep commits small and focused
-2. Update tests when adding features
-3. Document configuration changes
-4. Use formatters: `black`, `isort`, `flake8`
-
----
-
-## 📧 Contact
-
-**Maintainer:** Doğancan Karakoç ([@dogncankrkc](https://github.com/dogncankrkc))
-
----
-
-## 📄 License
-
-MIT License - see LICENSE file for details
 
